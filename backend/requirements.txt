@@ -1,0 +1,13 @@
+# FocusFlow Backend Dependencies
+flask>=3.0.0
+flask-cors>=4.0.0
+sqlalchemy>=2.0.0
+psycopg2-binary>=2.9.9
+python-dotenv>=1.0.0
+
+# Authentication
+bcrypt>=4.0.0
+PyJWT>=2.8.0
+
+# LLM Integration
+openai>=1.0.0
