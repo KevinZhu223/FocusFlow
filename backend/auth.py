@@ -214,3 +214,34 @@ def init_auth_routes(Session):
             session.close()
     
     return auth_bp
+
+
+def get_user_from_token(token, Session):
+    """
+    Helper function to decode a token and return the User object.
+    Requires the database Session factory to be passed in.
+    """
+    try:
+        if not token:
+            return None
+            
+        # Clean the token if it has "Bearer " prefix
+        if token.startswith('Bearer '):
+            token = token.split(' ')[1]
+            
+        # Use the existing decode_token function in this file
+        payload = decode_token(token)
+        if not payload:
+            return None
+        
+        # Query the database
+        session = Session()
+        try:
+            user = session.query(User).filter_by(id=payload['user_id']).first()
+            return user
+        finally:
+            session.close()
+            
+    except Exception as e:
+        print(f"Token Error: {e}")
+        return None

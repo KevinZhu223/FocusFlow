@@ -1,18 +1,27 @@
 """
 FocusFlow - Flask Application
 Main API server for the Smart Productivity Tracker
+Phase 3: Added gamification, goals, leaderboard, profile, and data export
 """
 
 import os
+import csv
+import io
 from datetime import datetime, timedelta
-from flask import Flask, request, jsonify, g
+from flask import Flask, request, jsonify, g, Response
 from flask_cors import CORS
 from sqlalchemy import func
 from dotenv import load_dotenv
 
-from models import Base, User, ActivityLog, CategoryEnum, init_db
+from models import (
+    Base, User, ActivityLog, CategoryEnum, Goal, Badge, UserBadge,
+    TimeframeEnum, init_db
+)
 from nlp_parser import parse_activity, generate_daily_insights
-from auth import auth_bp, init_auth_routes, require_auth
+from auth import auth_bp, init_auth_routes, require_auth, get_user_from_token
+from gamification import (
+    process_activity_gamification, get_level_progress, calculate_level
+)
 
 # Load environment variables
 load_dotenv()
@@ -34,6 +43,29 @@ engine, Session = init_db(DATABASE_URL)
 init_auth_routes(Session)
 app.register_blueprint(auth_bp)
 
+@app.before_request
+def load_logged_in_user():
+    """
+    Check for Authorization header before every request.
+    If a valid token exists, set g.user_id so get_current_user() finds the real user.
+    """
+    auth_header = request.headers.get('Authorization')
+    g.user_id = None # Default to None
+
+    if auth_header:
+        # We pass the global Session factory to the helper
+        user = get_user_from_token(auth_header, Session)
+        if user:
+            g.user_id = user.id
+
+
+def get_current_user(session):
+    """Get current authenticated user or demo user"""
+    user_id = getattr(g, 'user_id', None)
+    if user_id:
+        return session.query(User).filter_by(id=user_id).first()
+    return get_or_create_demo_user(session)
+
 
 def get_or_create_demo_user(session):
     """Get or create a demo user for MVP testing"""
@@ -41,31 +73,35 @@ def get_or_create_demo_user(session):
     if not user:
         user = User(
             email="demo@focusflow.app",
-            name="Demo User"
+            name="Demo User",
+            bio="Welcome to FocusFlow! This is a demo account.",
+            is_public=True
         )
         session.add(user)
         session.commit()
     return user
 
 
+# ============================================================================
+# HEALTH CHECK
+# ============================================================================
+
 @app.route('/api/health', methods=['GET'])
 def health_check():
     """Health check endpoint"""
-    return jsonify({"status": "healthy", "service": "FocusFlow API"})
+    return jsonify({"status": "healthy", "service": "FocusFlow API", "version": "3.0"})
 
+
+# ============================================================================
+# ACTIVITY LOGGING (with Gamification)
+# ============================================================================
 
 @app.route('/api/log_activity', methods=['POST'])
 def log_activity():
     """
     Log a new activity from natural language input.
-    
-    Request Body:
-        {
-            "text": "Studied for 2 hours"
-        }
-    
-    Returns:
-        The created activity log entry
+    Now includes gamification (XP, badges) processing.
+    Accepts local_hour (0-23) for timezone-aware badge checks.
     """
     data = request.get_json()
     
@@ -76,13 +112,22 @@ def log_activity():
     if not text:
         return jsonify({"error": "Text cannot be empty"}), 400
     
+    # Get local hour from frontend (for timezone-aware badges)
+    local_hour = data.get('local_hour')
+    if local_hour is not None:
+        try:
+            local_hour = int(local_hour)
+            if not (0 <= local_hour <= 23):
+                local_hour = None
+        except (ValueError, TypeError):
+            local_hour = None
+    
     # Parse the activity using NLP
     parsed = parse_activity(text)
     
     session = Session()
     try:
-        # Get demo user (in production, this would use authenticated user)
-        user = get_or_create_demo_user(session)
+        user = get_current_user(session)
         
         # Create activity log entry
         activity = ActivityLog(
@@ -93,15 +138,29 @@ def log_activity():
             duration_minutes=parsed['duration_minutes'],
             sentiment_score=parsed['sentiment_score'],
             productivity_score=parsed['productivity_score'],
+            is_focus_session=1 if parsed.get('is_focus_session') else 0,
             timestamp=datetime.utcnow()
         )
         
         session.add(activity)
+        session.flush()  # Get activity ID
+        
+        # Get all user activities for badge checking
+        all_activities = session.query(ActivityLog).filter(
+            ActivityLog.user_id == user.id
+        ).all()
+        
+        # Process gamification (XP + badges) - pass local_hour for timezone-aware checks
+        gamification_result = process_activity_gamification(
+            session, user, activity, all_activities, local_hour
+        )
+        
         session.commit()
         
         return jsonify({
             "success": True,
-            "activity": activity.to_dict()
+            "activity": activity.to_dict(),
+            "gamification": gamification_result
         }), 201
         
     except Exception as e:
@@ -113,29 +172,18 @@ def log_activity():
 
 @app.route('/api/activities', methods=['GET'])
 def get_activities():
-    """
-    Get activities for the current user.
-    
-    Query Parameters:
-        - date: Filter by date (YYYY-MM-DD), defaults to today
-        - limit: Maximum number of results (default 50)
-    
-    Returns:
-        List of activity log entries
-    """
-    # Parse query parameters
+    """Get activities for the current user."""
     date_str = request.args.get('date')
     limit = min(int(request.args.get('limit', 50)), 100)
     
     session = Session()
     try:
-        user = get_or_create_demo_user(session)
+        user = get_current_user(session)
         
         query = session.query(ActivityLog).filter(
             ActivityLog.user_id == user.id
         )
         
-        # Filter by date if specified
         if date_str:
             try:
                 target_date = datetime.strptime(date_str, '%Y-%m-%d').date()
@@ -144,7 +192,6 @@ def get_activities():
         else:
             target_date = datetime.utcnow().date()
         
-        # Filter for activities on the target date
         start_of_day = datetime.combine(target_date, datetime.min.time())
         end_of_day = start_of_day + timedelta(days=1)
         
@@ -153,7 +200,6 @@ def get_activities():
             ActivityLog.timestamp < end_of_day
         )
         
-        # Order by timestamp descending (most recent first)
         activities = query.order_by(ActivityLog.timestamp.desc()).limit(limit).all()
         
         return jsonify({
@@ -168,86 +214,12 @@ def get_activities():
         session.close()
 
 
-@app.route('/api/dashboard', methods=['GET'])
-def get_dashboard():
-    """
-    Get dashboard statistics for the current user.
-    
-    Query Parameters:
-        - date: Date for stats (YYYY-MM-DD), defaults to today
-    
-    Returns:
-        Dashboard data including:
-        - daily_score: Sum of all productivity scores
-        - category_breakdown: Time spent by category
-        - activity_count: Number of activities logged
-    """
-    date_str = request.args.get('date')
-    
-    session = Session()
-    try:
-        user = get_or_create_demo_user(session)
-        
-        # Determine target date
-        if date_str:
-            try:
-                target_date = datetime.strptime(date_str, '%Y-%m-%d').date()
-            except ValueError:
-                return jsonify({"error": "Invalid date format. Use YYYY-MM-DD"}), 400
-        else:
-            target_date = datetime.utcnow().date()
-        
-        start_of_day = datetime.combine(target_date, datetime.min.time())
-        end_of_day = start_of_day + timedelta(days=1)
-        
-        # Get activities for the day
-        activities = session.query(ActivityLog).filter(
-            ActivityLog.user_id == user.id,
-            ActivityLog.timestamp >= start_of_day,
-            ActivityLog.timestamp < end_of_day
-        ).all()
-        
-        # Calculate daily score
-        daily_score = sum(a.productivity_score for a in activities)
-        
-        # Calculate category breakdown (time in minutes)
-        category_breakdown = {}
-        for category in CategoryEnum:
-            category_activities = [a for a in activities if a.category == category]
-            total_minutes = sum(
-                a.duration_minutes or 30  # Default to 30 min if not specified
-                for a in category_activities
-            )
-            if total_minutes > 0:
-                category_breakdown[category.value] = {
-                    "minutes": total_minutes,
-                    "count": len(category_activities)
-                }
-        
-        # Calculate average sentiment
-        sentiments = [a.sentiment_score for a in activities if a.sentiment_score is not None]
-        avg_sentiment = round(sum(sentiments) / len(sentiments), 2) if sentiments else 0
-        
-        return jsonify({
-            "date": target_date.isoformat(),
-            "daily_score": daily_score,
-            "activity_count": len(activities),
-            "average_sentiment": avg_sentiment,
-            "category_breakdown": category_breakdown
-        })
-        
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-    finally:
-        session.close()
-
-
 @app.route('/api/activities/<int:activity_id>', methods=['DELETE'])
 def delete_activity(activity_id):
     """Delete an activity by ID"""
     session = Session()
     try:
-        user = get_or_create_demo_user(session)
+        user = get_current_user(session)
         
         activity = session.query(ActivityLog).filter(
             ActivityLog.id == activity_id,
@@ -269,26 +241,19 @@ def delete_activity(activity_id):
         session.close()
 
 
-@app.route('/api/insights/daily', methods=['GET'])
-def get_daily_insights():
-    """
-    Get AI-generated daily coaching insights.
-    
-    Returns:
-        2-sentence coach insight based on today's activities
-    """
+# ============================================================================
+# DASHBOARD
+# ============================================================================
+
+@app.route('/api/dashboard', methods=['GET'])
+def get_dashboard():
+    """Get dashboard statistics including gamification info."""
     date_str = request.args.get('date')
     
     session = Session()
     try:
-        # Get user (authenticated or demo)
-        user_id = getattr(g, 'user_id', None)
-        if user_id:
-            user = session.query(User).filter_by(id=user_id).first()
-        else:
-            user = get_or_create_demo_user(session)
+        user = get_current_user(session)
         
-        # Determine target date
         if date_str:
             try:
                 target_date = datetime.strptime(date_str, '%Y-%m-%d').date()
@@ -300,17 +265,81 @@ def get_daily_insights():
         start_of_day = datetime.combine(target_date, datetime.min.time())
         end_of_day = start_of_day + timedelta(days=1)
         
-        # Get activities for the day
         activities = session.query(ActivityLog).filter(
             ActivityLog.user_id == user.id,
             ActivityLog.timestamp >= start_of_day,
             ActivityLog.timestamp < end_of_day
         ).all()
         
-        # Convert to dicts for the insights generator
-        activities_data = [a.to_dict() for a in activities]
+        daily_score = sum(a.productivity_score for a in activities)
         
-        # Generate insights using LLM
+        category_breakdown = {}
+        for category in CategoryEnum:
+            category_activities = [a for a in activities if a.category == category]
+            total_minutes = sum(
+                a.duration_minutes or 30
+                for a in category_activities
+            )
+            if total_minutes > 0:
+                category_breakdown[category.value] = {
+                    "minutes": total_minutes,
+                    "count": len(category_activities)
+                }
+        
+        sentiments = [a.sentiment_score for a in activities if a.sentiment_score is not None]
+        avg_sentiment = round(sum(sentiments) / len(sentiments), 2) if sentiments else 0
+        
+        # Get level progress
+        level_info = get_level_progress(user.xp)
+        
+        return jsonify({
+            "date": target_date.isoformat(),
+            "daily_score": round(daily_score, 2),
+            "activity_count": len(activities),
+            "average_sentiment": avg_sentiment,
+            "category_breakdown": category_breakdown,
+            "level": level_info["level"],
+            "xp": user.xp,
+            "level_progress": level_info
+        })
+        
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        session.close()
+
+
+# ============================================================================
+# INSIGHTS & HEATMAP
+# ============================================================================
+
+@app.route('/api/insights/daily', methods=['GET'])
+def get_daily_insights():
+    """Get AI-generated daily coaching insights."""
+    date_str = request.args.get('date')
+    
+    session = Session()
+    try:
+        user = get_current_user(session)
+        
+        if date_str:
+            try:
+                target_date = datetime.strptime(date_str, '%Y-%m-%d').date()
+            except ValueError:
+                return jsonify({"error": "Invalid date format. Use YYYY-MM-DD"}), 400
+        else:
+            target_date = datetime.utcnow().date()
+        
+        start_of_day = datetime.combine(target_date, datetime.min.time())
+        end_of_day = start_of_day + timedelta(days=1)
+        
+        activities = session.query(ActivityLog).filter(
+            ActivityLog.user_id == user.id,
+            ActivityLog.timestamp >= start_of_day,
+            ActivityLog.timestamp < end_of_day
+        ).all()
+        
+        activities_data = [a.to_dict() for a in activities]
         insight = generate_daily_insights(activities_data)
         
         return jsonify({
@@ -327,36 +356,23 @@ def get_daily_insights():
 
 @app.route('/api/activities/heatmap', methods=['GET'])
 def get_heatmap_data():
-    """
-    Get activity data for the last 365 days for heatmap visualization.
-    
-    Returns:
-        List of { date, count, score } for each day with activity
-    """
+    """Get activity data for heatmap visualization."""
     session = Session()
     try:
-        # Get user (authenticated or demo)
-        user_id = getattr(g, 'user_id', None)
-        if user_id:
-            user = session.query(User).filter_by(id=user_id).first()
-        else:
-            user = get_or_create_demo_user(session)
+        user = get_current_user(session)
         
-        # Calculate date range (last 365 days)
         end_date = datetime.utcnow().date()
         start_date = end_date - timedelta(days=365)
         
         start_datetime = datetime.combine(start_date, datetime.min.time())
         end_datetime = datetime.combine(end_date + timedelta(days=1), datetime.min.time())
         
-        # Get all activities in range
         activities = session.query(ActivityLog).filter(
             ActivityLog.user_id == user.id,
             ActivityLog.timestamp >= start_datetime,
             ActivityLog.timestamp < end_datetime
         ).all()
         
-        # Aggregate by date
         daily_data = {}
         for activity in activities:
             date_key = activity.timestamp.date().isoformat()
@@ -365,7 +381,6 @@ def get_heatmap_data():
             daily_data[date_key]["count"] += 1
             daily_data[date_key]["score"] += activity.productivity_score or 0
         
-        # Convert to list format
         heatmap_data = [
             {"date": date, "count": data["count"], "score": round(data["score"], 2)}
             for date, data in sorted(daily_data.items())
@@ -383,7 +398,356 @@ def get_heatmap_data():
         session.close()
 
 
+# ============================================================================
+# GOALS
+# ============================================================================
+
+@app.route('/api/goals', methods=['GET'])
+def get_goals():
+    """Get all goals for the current user with progress."""
+    session = Session()
+    try:
+        user = get_current_user(session)
+        
+        goals = session.query(Goal).filter(Goal.user_id == user.id).all()
+        
+        goals_with_progress = []
+        for goal in goals:
+            # Calculate progress based on timeframe
+            if goal.timeframe == TimeframeEnum.WEEKLY:
+                # Start of current week (Monday)
+                today = datetime.utcnow().date()
+                start_date = today - timedelta(days=today.weekday())
+            else:
+                # Start of current month
+                today = datetime.utcnow().date()
+                start_date = today.replace(day=1)
+            
+            start_datetime = datetime.combine(start_date, datetime.min.time())
+            
+            # Get activities for this category in the timeframe
+            activities = session.query(ActivityLog).filter(
+                ActivityLog.user_id == user.id,
+                ActivityLog.category == goal.category,
+                ActivityLog.timestamp >= start_datetime
+            ).all()
+            
+            # Calculate hours logged
+            total_minutes = sum(a.duration_minutes or 30 for a in activities)
+            hours_logged = round(total_minutes / 60, 1)
+            progress_percent = min(100, round((hours_logged / goal.target_value) * 100, 1))
+            
+            goal_data = goal.to_dict()
+            goal_data["hours_logged"] = hours_logged
+            goal_data["progress_percent"] = progress_percent
+            goal_data["status"] = (
+                "complete" if progress_percent >= 100
+                else "on_track" if progress_percent >= 50
+                else "at_risk" if progress_percent >= 25
+                else "behind"
+            )
+            goals_with_progress.append(goal_data)
+        
+        return jsonify({"goals": goals_with_progress})
+        
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        session.close()
+
+
+@app.route('/api/goals', methods=['POST'])
+def create_goal():
+    """Create a new goal with optional custom title."""
+    data = request.get_json()
+    
+    if not data:
+        return jsonify({"error": "Missing request body"}), 400
+    
+    required = ['category', 'target_value', 'timeframe']
+    for field in required:
+        if field not in data:
+            return jsonify({"error": f"Missing required field: {field}"}), 400
+    
+    # Validate category
+    try:
+        category = CategoryEnum(data['category'])
+    except ValueError:
+        return jsonify({"error": f"Invalid category: {data['category']}"}), 400
+    
+    # Validate timeframe
+    try:
+        timeframe = TimeframeEnum(data['timeframe'])
+    except ValueError:
+        return jsonify({"error": f"Invalid timeframe: {data['timeframe']}"}), 400
+    
+    # Get optional title
+    title = data.get('title', '').strip()[:255] if data.get('title') else None
+    
+    session = Session()
+    try:
+        user = get_current_user(session)
+        
+        # Check if goal for this category/timeframe already exists
+        existing = session.query(Goal).filter(
+            Goal.user_id == user.id,
+            Goal.category == category,
+            Goal.timeframe == timeframe
+        ).first()
+        
+        if existing:
+            # Update existing goal
+            existing.target_value = int(data['target_value'])
+            existing.title = title or existing.title  # Keep old title if not provided
+            goal = existing
+        else:
+            # Create new goal
+            goal = Goal(
+                user_id=user.id,
+                title=title,
+                category=category,
+                target_value=int(data['target_value']),
+                timeframe=timeframe
+            )
+            session.add(goal)
+        
+        session.commit()
+        
+        return jsonify({
+            "success": True,
+            "goal": goal.to_dict()
+        }), 201
+        
+    except Exception as e:
+        session.rollback()
+        return jsonify({"error": str(e)}), 500
+    finally:
+        session.close()
+
+
+@app.route('/api/goals/<int:goal_id>', methods=['DELETE'])
+def delete_goal(goal_id):
+    """Delete a goal."""
+    session = Session()
+    try:
+        user = get_current_user(session)
+        
+        goal = session.query(Goal).filter(
+            Goal.id == goal_id,
+            Goal.user_id == user.id
+        ).first()
+        
+        if not goal:
+            return jsonify({"error": "Goal not found"}), 404
+        
+        session.delete(goal)
+        session.commit()
+        
+        return jsonify({"success": True, "message": "Goal deleted"})
+        
+    except Exception as e:
+        session.rollback()
+        return jsonify({"error": str(e)}), 500
+    finally:
+        session.close()
+
+
+# ============================================================================
+# LEADERBOARD
+# ============================================================================
+
+@app.route('/api/leaderboard', methods=['GET'])
+def get_leaderboard():
+    """Get top 10 public users by weekly score."""
+    session = Session()
+    try:
+        # Get start of current week
+        today = datetime.utcnow().date()
+        start_of_week = today - timedelta(days=today.weekday())
+        start_datetime = datetime.combine(start_of_week, datetime.min.time())
+        
+        # Get all public users
+        public_users = session.query(User).filter(User.is_public == True).all()
+        
+        leaderboard = []
+        for user in public_users:
+            # Calculate weekly score
+            activities = session.query(ActivityLog).filter(
+                ActivityLog.user_id == user.id,
+                ActivityLog.timestamp >= start_datetime
+            ).all()
+            
+            weekly_score = sum(a.productivity_score for a in activities)
+            
+            leaderboard.append({
+                "user_id": user.id,
+                "name": user.name,
+                "level": user.level,
+                "avatar_color": user.avatar_color or "#6366f1",
+                "weekly_score": round(weekly_score, 2)
+            })
+        
+        # Sort by weekly score descending
+        leaderboard.sort(key=lambda x: x["weekly_score"], reverse=True)
+        
+        # Add rank
+        for i, entry in enumerate(leaderboard[:10]):
+            entry["rank"] = i + 1
+        
+        return jsonify({
+            "week_start": start_of_week.isoformat(),
+            "leaderboard": leaderboard[:10]
+        })
+        
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        session.close()
+
+
+# ============================================================================
+# USER PROFILE
+# ============================================================================
+
+@app.route('/api/user/profile', methods=['GET'])
+def get_profile():
+    """Get current user's full profile including badges."""
+    session = Session()
+    try:
+        user = get_current_user(session)
+        
+        # Get user badges
+        user_badges = session.query(UserBadge).filter(
+            UserBadge.user_id == user.id
+        ).all()
+        
+        badges = [ub.to_dict() for ub in user_badges]
+        
+        # Get level progress
+        level_info = get_level_progress(user.xp)
+        
+        # Get total stats
+        total_activities = session.query(ActivityLog).filter(
+            ActivityLog.user_id == user.id
+        ).count()
+        
+        total_score = session.query(func.sum(ActivityLog.productivity_score)).filter(
+            ActivityLog.user_id == user.id
+        ).scalar() or 0
+        
+        return jsonify({
+            "user": user.to_dict(include_private=True),
+            "level_progress": level_info,
+            "badges": badges,
+            "stats": {
+                "total_activities": total_activities,
+                "total_score": round(total_score, 2),
+                "member_since": user.created_at.isoformat() if user.created_at else None
+            }
+        })
+        
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        session.close()
+
+
+@app.route('/api/user/profile', methods=['PUT'])
+def update_profile():
+    """Update user profile (bio, avatar_color, is_public)."""
+    data = request.get_json()
+    
+    if not data:
+        return jsonify({"error": "Missing request body"}), 400
+    
+    session = Session()
+    try:
+        user = get_current_user(session)
+        
+        # Update allowed fields
+        if 'bio' in data:
+            user.bio = data['bio'][:500] if data['bio'] else None
+        
+        if 'avatar_color' in data:
+            user.avatar_color = data['avatar_color']
+        
+        if 'is_public' in data:
+            user.is_public = bool(data['is_public'])
+        
+        if 'name' in data and data['name'].strip():
+            user.name = data['name'].strip()[:255]
+        
+        session.commit()
+        
+        return jsonify({
+            "success": True,
+            "user": user.to_dict(include_private=True)
+        })
+        
+    except Exception as e:
+        session.rollback()
+        return jsonify({"error": str(e)}), 500
+    finally:
+        session.close()
+
+
+# ============================================================================
+# DATA EXPORT
+# ============================================================================
+
+@app.route('/api/user/export_data', methods=['GET'])
+def export_data():
+    """Export all user activity data as CSV."""
+    session = Session()
+    try:
+        user = get_current_user(session)
+        
+        # Get all user activities
+        activities = session.query(ActivityLog).filter(
+            ActivityLog.user_id == user.id
+        ).order_by(ActivityLog.timestamp.desc()).all()
+        
+        # Create CSV in memory
+        output = io.StringIO()
+        writer = csv.writer(output)
+        
+        # Header row
+        writer.writerow([
+            'Timestamp', 'Activity', 'Category', 'Duration (min)',
+            'Productivity Score', 'Focus Session', 'Raw Input'
+        ])
+        
+        # Data rows
+        for activity in activities:
+            writer.writerow([
+                activity.timestamp.isoformat() if activity.timestamp else '',
+                activity.activity_name,
+                activity.category.value if activity.category else '',
+                activity.duration_minutes or '',
+                round(activity.productivity_score, 2) if activity.productivity_score else '',
+                'Yes' if activity.is_focus_session else 'No',
+                activity.raw_input
+            ])
+        
+        # Create response
+        output.seek(0)
+        response = Response(
+            output.getvalue(),
+            mimetype='text/csv',
+            headers={
+                'Content-Disposition': f'attachment; filename=focusflow_export_{datetime.utcnow().strftime("%Y%m%d")}.csv'
+            }
+        )
+        
+        return response
+        
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        session.close()
+
+
 if __name__ == '__main__':
-    print("Starting FocusFlow API Server...")
+    print("Starting FocusFlow API Server (Phase 3)...")
     print(f"Database: {DATABASE_URL}")
     app.run(debug=True, host='0.0.0.0', port=5000)

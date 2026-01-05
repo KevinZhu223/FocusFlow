@@ -1,12 +1,12 @@
 """
 FocusFlow - Database Models
 SQLAlchemy models for the Smart Productivity Tracker
-Phase 2: Added authentication support and source tracking
+Phase 3: Added gamification (XP, Levels, Badges), Goals, and Social features
 """
 
 from datetime import datetime
 from enum import Enum as PyEnum
-from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, ForeignKey, Enum
+from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, ForeignKey, Enum, Boolean, Text
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship, sessionmaker
 
@@ -30,8 +30,14 @@ class SourceEnum(PyEnum):
     API = "api"
 
 
+class TimeframeEnum(PyEnum):
+    """Goal timeframes"""
+    WEEKLY = "weekly"
+    MONTHLY = "monthly"
+
+
 class User(Base):
-    """User model for authentication and activity ownership"""
+    """User model with authentication, gamification, and social features"""
     __tablename__ = 'users'
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -39,20 +45,42 @@ class User(Base):
     name = Column(String(255), nullable=False)
     password_hash = Column(String(255), nullable=True)  # Nullable for demo user
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    
+    # Profile fields (Phase 3)
+    bio = Column(Text, nullable=True)
+    avatar_color = Column(String(20), default="#6366f1")  # Default indigo
+    
+    # Social/Leaderboard (Phase 3)
+    is_public = Column(Boolean, default=False)
+    
+    # Gamification (Phase 3)
+    xp = Column(Integer, default=0)
+    level = Column(Integer, default=1)
 
-    # Relationship to activities
+    # Relationships
     activities = relationship("ActivityLog", back_populates="user", cascade="all, delete-orphan")
+    goals = relationship("Goal", back_populates="user", cascade="all, delete-orphan")
+    badges = relationship("UserBadge", back_populates="user", cascade="all, delete-orphan")
 
     def __repr__(self):
-        return f"<User(id={self.id}, email='{self.email}', name='{self.name}')>"
+        return f"<User(id={self.id}, email='{self.email}', name='{self.name}', level={self.level})>"
 
-    def to_dict(self):
-        return {
+    def to_dict(self, include_private=True):
+        data = {
             "id": self.id,
-            "email": self.email,
             "name": self.name,
-            "created_at": self.created_at.isoformat() if self.created_at else None
+            "level": self.level,
+            "avatar_color": self.avatar_color or "#6366f1",
         }
+        if include_private:
+            data.update({
+                "email": self.email,
+                "bio": self.bio,
+                "is_public": self.is_public,
+                "xp": self.xp,
+                "created_at": self.created_at.isoformat() if self.created_at else None
+            })
+        return data
 
 
 class ActivityLog(Base):
@@ -105,6 +133,86 @@ class ActivityLog(Base):
             "is_focus_session": bool(self.is_focus_session),
             "source": self.source.value if self.source else "manual",
             "timestamp": self.timestamp.isoformat() if self.timestamp else None
+        }
+
+
+class Goal(Base):
+    """User goals for category-based time tracking"""
+    __tablename__ = 'goals'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey('users.id'), nullable=False, index=True)
+    title = Column(String(255), nullable=True)  # Custom goal name
+    category = Column(Enum(CategoryEnum), nullable=False)
+    target_value = Column(Integer, nullable=False)  # Target hours
+    timeframe = Column(Enum(TimeframeEnum), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    # Relationship
+    user = relationship("User", back_populates="goals")
+
+    def __repr__(self):
+        return f"<Goal(id={self.id}, title='{self.title}', category={self.category.value}, target={self.target_value}h/{self.timeframe.value})>"
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "user_id": self.user_id,
+            "title": self.title,
+            "category": self.category.value if self.category else None,
+            "target_value": self.target_value,
+            "timeframe": self.timeframe.value if self.timeframe else None,
+            "created_at": self.created_at.isoformat() if self.created_at else None
+        }
+
+
+class Badge(Base):
+    """Achievement badges that users can earn"""
+    __tablename__ = 'badges'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String(100), unique=True, nullable=False)
+    description = Column(String(500), nullable=False)
+    icon_name = Column(String(50), nullable=False)  # Lucide icon name
+
+    # Relationship
+    user_badges = relationship("UserBadge", back_populates="badge")
+
+    def __repr__(self):
+        return f"<Badge(id={self.id}, name='{self.name}')>"
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "name": self.name,
+            "description": self.description,
+            "icon_name": self.icon_name
+        }
+
+
+class UserBadge(Base):
+    """Junction table linking users to earned badges"""
+    __tablename__ = 'user_badges'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey('users.id'), nullable=False, index=True)
+    badge_id = Column(Integer, ForeignKey('badges.id'), nullable=False, index=True)
+    earned_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    # Relationships
+    user = relationship("User", back_populates="badges")
+    badge = relationship("Badge", back_populates="user_badges")
+
+    def __repr__(self):
+        return f"<UserBadge(user_id={self.user_id}, badge_id={self.badge_id})>"
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "user_id": self.user_id,
+            "badge_id": self.badge_id,
+            "badge": self.badge.to_dict() if self.badge else None,
+            "earned_at": self.earned_at.isoformat() if self.earned_at else None
         }
 
 

@@ -1,7 +1,7 @@
 /**
  * FocusFlow - API Service
  * Handles all communication with the Flask backend
- * Phase 2: Added auth and insights endpoints
+ * Phase 3: Added goals, leaderboard, profile, and export endpoints
  */
 
 const API_BASE = '/api';
@@ -100,12 +100,16 @@ export async function getMe() {
 
 /**
  * Log a new activity from natural language input
+ * Includes local_hour for timezone-aware badge checks
  */
 export async function logActivity(text) {
     const response = await fetch(`${API_BASE}/log_activity`, {
         method: 'POST',
         headers: getHeaders(),
-        body: JSON.stringify({ text }),
+        body: JSON.stringify({
+            text,
+            local_hour: new Date().getHours()  // Send user's local hour (0-23)
+        }),
     });
     return handleResponse(response);
 }
@@ -172,6 +176,117 @@ export async function getHeatmapData() {
         headers: getHeaders(),
     });
     return handleResponse(response);
+}
+
+// ============================================
+// Goals API
+// ============================================
+
+/**
+ * Get all goals with progress
+ */
+export async function getGoals() {
+    const response = await fetch(`${API_BASE}/goals`, {
+        headers: getHeaders(),
+    });
+    return handleResponse(response);
+}
+
+/**
+ * Create or update a goal
+ */
+export async function createGoal(category, targetValue, timeframe, title = null) {
+    const response = await fetch(`${API_BASE}/goals`, {
+        method: 'POST',
+        headers: getHeaders(),
+        body: JSON.stringify({
+            category,
+            target_value: targetValue,
+            timeframe,
+            title
+        }),
+    });
+    return handleResponse(response);
+}
+
+/**
+ * Delete a goal
+ */
+export async function deleteGoal(goalId) {
+    const response = await fetch(`${API_BASE}/goals/${goalId}`, {
+        method: 'DELETE',
+        headers: getHeaders(),
+    });
+    return handleResponse(response);
+}
+
+// ============================================
+// Leaderboard API
+// ============================================
+
+/**
+ * Get weekly leaderboard
+ */
+export async function getLeaderboard() {
+    const response = await fetch(`${API_BASE}/leaderboard`, {
+        headers: getHeaders(),
+    });
+    return handleResponse(response);
+}
+
+// ============================================
+// Profile API
+// ============================================
+
+/**
+ * Get user profile with badges
+ */
+export async function getProfile() {
+    const response = await fetch(`${API_BASE}/user/profile`, {
+        headers: getHeaders(),
+    });
+    return handleResponse(response);
+}
+
+/**
+ * Update user profile
+ */
+export async function updateProfile(data) {
+    const response = await fetch(`${API_BASE}/user/profile`, {
+        method: 'PUT',
+        headers: getHeaders(),
+        body: JSON.stringify(data),
+    });
+    return handleResponse(response);
+}
+
+/**
+ * Export user data as CSV (triggers download)
+ */
+export async function exportData() {
+    const token = getToken();
+    const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
+
+    const response = await fetch(`${API_BASE}/user/export_data`, {
+        headers,
+    });
+
+    if (!response.ok) {
+        throw new Error('Failed to export data');
+    }
+
+    // Get the blob and trigger download
+    const blob = await response.blob();
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `focusflow_export_${new Date().toISOString().split('T')[0]}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    window.URL.revokeObjectURL(url);
+    a.remove();
+
+    return { success: true };
 }
 
 // ============================================
