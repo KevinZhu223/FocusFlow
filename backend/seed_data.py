@@ -15,7 +15,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from models import Base, Badge, User, ActivityLog, CategoryEnum, SourceEnum, init_db
-from gamification import BADGE_DEFINITIONS
+from gamification import BADGE_DEFINITIONS, seed_items, ITEM_DEFINITIONS
 
 # Demo users for leaderboard
 DEMO_USERS = [
@@ -48,6 +48,13 @@ def seed_badges(session):
     
     session.commit()
     print(f"✓ Seeded {len(BADGE_DEFINITIONS)} badges")
+
+
+def seed_items_data(session):
+    """Seed all collectible items into the database"""
+    print("\nSeeding items...")
+    count = seed_items(session)
+    print(f"✓ Seeded {count} items")
 
 
 def seed_demo_users(session):
@@ -135,6 +142,7 @@ def main():
     
     try:
         seed_badges(session)
+        seed_items(session)
         seed_demo_users(session)
         
         print("\n" + "=" * 50)

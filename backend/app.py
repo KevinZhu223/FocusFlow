@@ -15,12 +15,13 @@ from dotenv import load_dotenv
 
 from models import (
     Base, User, ActivityLog, CategoryEnum, Goal, Badge, UserBadge,
-    TimeframeEnum, init_db
+    TimeframeEnum, Item, UserItem, init_db
 )
 from nlp_parser import parse_activity, generate_daily_insights
 from auth import auth_bp, init_auth_routes, require_auth, get_user_from_token
 from gamification import (
-    process_activity_gamification, get_level_progress, calculate_level
+    process_activity_gamification, get_level_progress, calculate_level,
+    open_chest, check_chest_eligibility
 )
 
 # Load environment variables
@@ -155,12 +156,22 @@ def log_activity():
             session, user, activity, all_activities, local_hour
         )
         
+        # Award chest credits for productive work (Phase 4.5)
+        credits_earned = 0
+        if parsed['productivity_score'] > 0:
+            duration_hours = (parsed['duration_minutes'] or 30) / 60
+            credits_earned = int(duration_hours // 2)  # 1 credit per 2 hours
+            if credits_earned > 0:
+                user.chest_credits = (user.chest_credits or 0) + credits_earned
+        
         session.commit()
         
         return jsonify({
             "success": True,
             "activity": activity.to_dict(),
-            "gamification": gamification_result
+            "gamification": gamification_result,
+            "credits_earned": credits_earned,
+            "total_credits": user.chest_credits or 0
         }), 201
         
     except Exception as e:
@@ -437,15 +448,42 @@ def get_goals():
             hours_logged = round(total_minutes / 60, 1)
             progress_percent = min(100, round((hours_logged / goal.target_value) * 100, 1))
             
+            # Smart pacing: calculate expected progress based on day of week
+            today = datetime.utcnow()
+            if goal.timeframe == TimeframeEnum.WEEKLY:
+                # Days into the week (1 = Monday, 7 = Sunday)
+                days_passed = max(1, today.weekday() + 1)  # weekday() returns 0-6
+                total_days = 7
+            else:  # Monthly
+                days_passed = today.day
+                # Get total days in month
+                if today.month == 12:
+                    total_days = 31
+                else:
+                    next_month = today.replace(day=28) + timedelta(days=4)
+                    total_days = (next_month - timedelta(days=next_month.day)).day
+            
+            expected_hours = round((goal.target_value / total_days) * days_passed, 1)
+            expected_percent = min(100, round((expected_hours / goal.target_value) * 100, 1))
+            
+            # Determine status based on pacing
+            if progress_percent >= 100:
+                pacing_status = "complete"
+            elif hours_logged >= expected_hours:
+                pacing_status = "on_track"
+            elif hours_logged >= expected_hours * 0.7:
+                pacing_status = "slightly_behind"
+            else:
+                pacing_status = "at_risk"
+            
             goal_data = goal.to_dict()
             goal_data["hours_logged"] = hours_logged
             goal_data["progress_percent"] = progress_percent
-            goal_data["status"] = (
-                "complete" if progress_percent >= 100
-                else "on_track" if progress_percent >= 50
-                else "at_risk" if progress_percent >= 25
-                else "behind"
-            )
+            goal_data["expected_hours"] = expected_hours
+            goal_data["expected_percent"] = expected_percent
+            goal_data["days_passed"] = days_passed
+            goal_data["total_days"] = total_days
+            goal_data["status"] = pacing_status
             goals_with_progress.append(goal_data)
         
         return jsonify({"goals": goals_with_progress})
@@ -747,7 +785,218 @@ def export_data():
         session.close()
 
 
+# ============================================================================
+# INTERVENTION / WATCHER SYSTEM (Phase 4)
+# ============================================================================
+
+@app.route('/api/intervention/heartbeat', methods=['POST'])
+def intervention_heartbeat():
+    """
+    Receive heartbeat from Watcher script when gaming app is detected.
+    Increments today_gaming_minutes and returns status.
+    """
+    data = request.get_json()
+    app_detected = data.get('app_detected', 'Unknown') if data else 'Unknown'
+    
+    session = Session()
+    try:
+        user = get_current_user(session)
+        
+        # Reset daily gaming minutes if it's a new day
+        today = datetime.utcnow().date()
+        if user.last_gaming_reset is None or user.last_gaming_reset.date() < today:
+            user.today_gaming_minutes = 0
+            user.last_gaming_reset = datetime.utcnow()
+        
+        # Increment gaming minutes
+        user.today_gaming_minutes += 1
+        session.commit()
+        
+        # Calculate remaining time
+        allowance = user.daily_gaming_allowance or 60
+        minutes_used = user.today_gaming_minutes
+        remaining = allowance - minutes_used
+        
+        # Determine status
+        if minutes_used >= allowance:
+            status = 'CRITICAL'
+            message = "⛔ LIMIT EXCEEDED! Time to stop!"
+        elif remaining <= 10:
+            status = 'WARNING'
+            message = f"⚠️ Only {remaining} minutes remaining!"
+        else:
+            status = 'OK'
+            message = f"✓ {remaining} minutes remaining"
+        
+        return jsonify({
+            "status": status,
+            "message": message,
+            "app_detected": app_detected,
+            "gaming_minutes": minutes_used,
+            "allowance": allowance,
+            "remaining": max(0, remaining)
+        })
+        
+    except Exception as e:
+        session.rollback()
+        return jsonify({"error": str(e)}), 500
+    finally:
+        session.close()
+
+
+@app.route('/api/user/intervention_status', methods=['GET'])
+def get_intervention_status():
+    """Get current intervention/gaming status for polling."""
+    session = Session()
+    try:
+        user = get_current_user(session)
+        
+        # Reset daily gaming minutes if it's a new day
+        today = datetime.utcnow().date()
+        if user.last_gaming_reset is None or user.last_gaming_reset.date() < today:
+            user.today_gaming_minutes = 0
+            user.last_gaming_reset = datetime.utcnow()
+            session.commit()
+        
+        allowance = user.daily_gaming_allowance or 60
+        minutes_used = user.today_gaming_minutes
+        remaining = allowance - minutes_used
+        
+        if minutes_used >= allowance:
+            status = 'CRITICAL'
+        elif remaining <= 10:
+            status = 'WARNING'
+        else:
+            status = 'OK'
+        
+        return jsonify({
+            "status": status,
+            "gaming_minutes": minutes_used,
+            "allowance": allowance,
+            "remaining": max(0, remaining)
+        })
+        
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        session.close()
+
+
+# ============================================================================
+# LOOT BOX / COLLECTION SYSTEM (Phase 4)
+# ============================================================================
+
+@app.route('/api/user/chest_status', methods=['GET'])
+def get_chest_status():
+    """Check if user is eligible to open a loot chest."""
+    session = Session()
+    try:
+        user = get_current_user(session)
+        result = check_chest_eligibility(session, user)
+        return jsonify(result)
+        
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        session.close()
+
+
+@app.route('/api/user/open_chest', methods=['POST'])
+def open_loot_chest():
+    """Open a loot chest using 1 credit."""
+    session = Session()
+    try:
+        user = get_current_user(session)
+        
+        # Open the chest (credit check is done in open_chest function)
+        result = open_chest(session, user)
+        
+        if 'error' in result:
+            status_code = 400 if result.get('credits_required') else 500
+            return jsonify(result), status_code
+        
+        session.commit()
+        
+        return jsonify({
+            "success": True,
+            "credits_remaining": user.chest_credits or 0,
+            **result
+        }), 200
+        
+    except Exception as e:
+        session.rollback()
+        return jsonify({"error": str(e)}), 500
+    finally:
+        session.close()
+
+
+@app.route('/api/user/collection', methods=['GET'])
+def get_user_collection():
+    """Get all items the user has collected."""
+    session = Session()
+    try:
+        user = get_current_user(session)
+        
+        # Get user's items
+        user_items = session.query(UserItem).filter(
+            UserItem.user_id == user.id
+        ).all()
+        
+        # Get all items for silhouettes
+        all_items = session.query(Item).all()
+        all_items_dict = {item.id: item.to_dict() for item in all_items}
+        
+        # Build collection with owned/unowned status
+        owned_ids = {ui.item_id for ui in user_items}
+        owned_items = [ui.to_dict() for ui in user_items]
+        
+        return jsonify({
+            "owned_items": owned_items,
+            "owned_count": len(owned_items),
+            "total_items": len(all_items),
+            "all_items": [
+                {
+                    **item.to_dict(),
+                    "owned": item.id in owned_ids,
+                    "count": next((ui.count for ui in user_items if ui.item_id == item.id), 0)
+                }
+                for item in all_items
+            ]
+        })
+        
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        session.close()
+
+
 if __name__ == '__main__':
-    print("Starting FocusFlow API Server (Phase 3)...")
+    print("Starting FocusFlow API Server (Phase 4)...")
     print(f"Database: {DATABASE_URL}")
+    
+    # Auto-seed items and badges if empty
+    try:
+        from gamification import seed_items, ITEM_DEFINITIONS
+        from seed_data import seed_badges
+        session = Session()
+        
+        # Check if items need seeding
+        from models import Item, Badge
+        item_count = session.query(Item).count()
+        if item_count == 0:
+            print("Seeding items...")
+            seed_items(session)
+            print(f"✓ Seeded {len(ITEM_DEFINITIONS)} items")
+        
+        # Check if badges need seeding  
+        badge_count = session.query(Badge).count()
+        if badge_count == 0:
+            print("Seeding badges...")
+            seed_badges(session)
+            print("✓ Seeded badges")
+        
+        session.close()
+    except Exception as e:
+        print(f"Warning: Auto-seed failed: {e}")
+    
     app.run(debug=True, host='0.0.0.0', port=5000)

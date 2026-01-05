@@ -388,3 +388,190 @@ def process_activity_gamification(
         **xp_result,
         "new_badges": new_badges
     }
+
+
+# ============================================================================
+# COLLECTIBLES / LOOT SYSTEM (Phase 4)
+# ============================================================================
+
+import random
+
+# Item definitions - 20 items across 4 rarities
+ITEM_DEFINITIONS = [
+    # COMMON (8 items)
+    {"name": "Rusty Floppy Disk", "rarity": "Common", "emoji": "💾", "description": "A relic from the before-times. Still holds 1.44MB of nostalgia."},
+    {"name": "Coffee Stain", "rarity": "Common", "emoji": "☕", "description": "The badge of every productive morning."},
+    {"name": "Tangled Earbuds", "rarity": "Common", "emoji": "🎧", "description": "How did they even get like this?"},
+    {"name": "Sticky Note Stack", "rarity": "Common", "emoji": "📝", "description": "For ideas too important to forget, too small to email."},
+    {"name": "Dead Pen Collection", "rarity": "Common", "emoji": "🖊️", "description": "They worked when you borrowed them..."},
+    {"name": "Cable Spaghetti", "rarity": "Common", "emoji": "🔌", "description": "Nobody knows what half of these connect to."},
+    {"name": "Mystery USB Drive", "rarity": "Common", "emoji": "📀", "description": "Could be vacation photos. Could be a virus. Who knows?"},
+    {"name": "Crumpled To-Do List", "rarity": "Common", "emoji": "📋", "description": "Half-checked, fully ignored."},
+    
+    # RARE (6 items)
+    {"name": "Ergonomic Keyboard", "rarity": "Rare", "emoji": "⌨️", "description": "Your wrists thank you."},
+    {"name": "Noise-Canceling Focus", "rarity": "Rare", "emoji": "🔇", "description": "The power to ignore everything."},
+    {"name": "Second Monitor", "rarity": "Rare", "emoji": "🖥️", "description": "Because one screen is never enough."},
+    {"name": "Standing Desk Pass", "rarity": "Rare", "emoji": "🏃", "description": "Sit, stand, repeat. Feel productive either way."},
+    {"name": "Premium Coffee Beans", "rarity": "Rare", "emoji": "☕", "description": "Single-origin, fair-trade, productivity-enhancing."},
+    {"name": "Mechanical Keyboard", "rarity": "Rare", "emoji": "🎹", "description": "CLACK CLACK CLACK. So satisfying."},
+    
+    # LEGENDARY (4 items)  
+    {"name": "Flow State Crystal", "rarity": "Legendary", "emoji": "💎", "description": "Channel the power of uninterrupted focus."},
+    {"name": "Time Turner", "rarity": "Legendary", "emoji": "⏰", "description": "For when you need just a few more hours."},
+    {"name": "Imposter Syndrome Shield", "rarity": "Legendary", "emoji": "🛡️", "description": "You ARE qualified. This proves it."},
+    {"name": "The Perfect Chair", "rarity": "Legendary", "emoji": "🪑", "description": "Lumbar support of legends."},
+    
+    # MYTHIC (2 items)
+    {"name": "The Golden Keyboard", "rarity": "Mythic", "emoji": "🏆", "description": "Typed upon by productivity gods."},
+    {"name": "Eternal Battery", "rarity": "Mythic", "emoji": "🔋", "description": "Never dies. Never stops. Never quits."},
+]
+
+# Rarity weights for loot drops (CS:GO style)
+RARITY_WEIGHTS = {
+    "Common": 60,      # 60%
+    "Rare": 25,        # 25%  
+    "Legendary": 10,   # 10%
+    "Mythic": 5,       # 5%
+}
+
+
+def seed_items(session: SQLSession):
+    """Seed all item definitions into the database"""
+    from models import Item, RarityEnum
+    
+    for item_def in ITEM_DEFINITIONS:
+        existing = session.query(Item).filter_by(name=item_def["name"]).first()
+        if existing:
+            continue
+        
+        item = Item(
+            name=item_def["name"],
+            rarity=RarityEnum[item_def["rarity"].upper()],
+            image_emoji=item_def["emoji"],
+            description=item_def["description"]
+        )
+        session.add(item)
+    
+    session.commit()
+    return len(ITEM_DEFINITIONS)
+
+
+def get_random_rarity() -> str:
+    """Get a random rarity based on weights"""
+    total = sum(RARITY_WEIGHTS.values())
+    roll = random.randint(1, total)
+    
+    cumulative = 0
+    for rarity, weight in RARITY_WEIGHTS.items():
+        cumulative += weight
+        if roll <= cumulative:
+            return rarity
+    
+    return "Common"  # Fallback
+
+
+def open_chest(session: SQLSession, user) -> Dict[str, Any]:
+    """
+    Open a loot chest and award a random item to the user.
+    Requires 1 chest credit.
+    
+    Args:
+        session: Database session
+        user: User model instance
+        
+    Returns:
+        Dict with item info and whether it's a new item
+    """
+    from models import Item, UserItem, RarityEnum
+    
+    # Check if user has credits
+    if (user.chest_credits or 0) <= 0:
+        return {"error": "No keys available", "credits_required": True}
+    
+    # Deduct 1 credit
+    user.chest_credits = (user.chest_credits or 0) - 1
+    
+    # Get random rarity
+    rarity = get_random_rarity()
+    rarity_enum = RarityEnum[rarity.upper()]
+    
+    # Get all items of that rarity
+    items = session.query(Item).filter_by(rarity=rarity_enum).all()
+    
+    if not items:
+        # Fallback to any item
+        items = session.query(Item).all()
+    
+    if not items:
+        # Refund credit if no items
+        user.chest_credits = (user.chest_credits or 0) + 1
+        return {"error": "No items available"}
+    
+    # Pick random item
+    item = random.choice(items)
+    
+    # Check if user already has this item
+    user_item = session.query(UserItem).filter_by(
+        user_id=user.id,
+        item_id=item.id
+    ).first()
+    
+    is_new = user_item is None
+    
+    if user_item:
+        # Increment count
+        user_item.count += 1
+    else:
+        # Add new item to user's collection
+        user_item = UserItem(
+            user_id=user.id,
+            item_id=item.id,
+            count=1
+        )
+        session.add(user_item)
+    
+    session.commit()
+    
+    return {
+        "item": item.to_dict(),
+        "is_new": is_new,
+        "count": user_item.count,
+        "rarity": rarity
+    }
+
+
+def check_chest_eligibility(session: SQLSession, user) -> Dict[str, Any]:
+    """
+    Check if user is eligible to open a chest (>2 hours productive work today).
+    
+    Returns:
+        Dict with eligibility status and productive hours
+    """
+    from models import ActivityLog, CategoryEnum
+    
+    # Get today's activities
+    today = datetime.utcnow().date()
+    start_of_day = datetime.combine(today, datetime.min.time())
+    
+    activities = session.query(ActivityLog).filter(
+        ActivityLog.user_id == user.id,
+        ActivityLog.timestamp >= start_of_day
+    ).all()
+    
+    # Count productive minutes (Career and Health categories)
+    productive_minutes = 0
+    for activity in activities:
+        if activity.category in [CategoryEnum.CAREER, CategoryEnum.HEALTH]:
+            productive_minutes += activity.duration_minutes or 30
+    
+    productive_hours = productive_minutes / 60
+    eligible = productive_hours >= 2.0
+    
+    return {
+        "eligible": eligible,
+        "productive_hours": round(productive_hours, 1),
+        "required_hours": 2.0,
+        "remaining_hours": max(0, round(2.0 - productive_hours, 1))
+    }
+

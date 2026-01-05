@@ -1,6 +1,7 @@
 /**
  * FocusFlow - Enhanced Dashboard
  * Phase 2: Includes Radar Chart, Energy Battery, Coach Insight, and Category Breakdown
+ * Phase 4: Added Loot Button for daily chest
  */
 
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from 'recharts';
@@ -9,6 +10,7 @@ import ProductivityRadar from './ProductivityRadar';
 import EnergyBattery from './EnergyBattery';
 import CoachInsight from './CoachInsight';
 import ActivityHeatmap from './ActivityHeatmap';
+import LootButton from './LootButton';
 
 /**
  * Category colors for the pie chart
@@ -176,6 +178,9 @@ export default function Dashboard({ dashboardData, isLoading }) {
             {/* Activity Heatmap */}
             <ActivityHeatmap />
 
+            {/* Daily Loot Chest */}
+            <LootButton />
+
             {/* Pie Chart - Category Breakdown */}
             <div className="bg-zinc-900/50 border border-zinc-800/50 rounded-xl p-4">
                 <h3 className="text-sm font-medium text-zinc-400 mb-4">
@@ -183,7 +188,7 @@ export default function Dashboard({ dashboardData, isLoading }) {
                 </h3>
 
                 {hasData ? (
-                    <div className="h-48">
+                    <div className="h-48" style={{ minHeight: '192px', minWidth: '0' }}>
                         <ResponsiveContainer width="100%" height="100%">
                             <PieChart>
                                 <Pie

@@ -14,10 +14,11 @@ const TIMEFRAMES = [
 ];
 
 const STATUS_STYLES = {
-    complete: { bg: 'bg-emerald-500/20', border: 'border-emerald-500/50', text: 'text-emerald-400', icon: CheckCircle },
-    on_track: { bg: 'bg-lime-500/20', border: 'border-lime-500/50', text: 'text-lime-400', icon: TrendingUp },
-    at_risk: { bg: 'bg-amber-500/20', border: 'border-amber-500/50', text: 'text-amber-400', icon: AlertTriangle },
-    behind: { bg: 'bg-red-500/20', border: 'border-red-500/50', text: 'text-red-400', icon: AlertTriangle }
+    complete: { bg: 'bg-emerald-500/20', border: 'border-emerald-500/50', text: 'text-emerald-400', icon: CheckCircle, label: 'Complete' },
+    on_track: { bg: 'bg-lime-500/20', border: 'border-lime-500/50', text: 'text-lime-400', icon: TrendingUp, label: 'On Track' },
+    slightly_behind: { bg: 'bg-amber-500/20', border: 'border-amber-500/50', text: 'text-amber-400', icon: AlertTriangle, label: 'Slightly Behind' },
+    at_risk: { bg: 'bg-red-500/20', border: 'border-red-500/50', text: 'text-red-400', icon: AlertTriangle, label: 'At Risk' },
+    behind: { bg: 'bg-red-500/20', border: 'border-red-500/50', text: 'text-red-400', icon: AlertTriangle, label: 'Behind' }
 };
 
 function GoalCard({ goal, onDelete }) {
@@ -27,6 +28,9 @@ function GoalCard({ goal, onDelete }) {
     // Use title if available, otherwise category
     const displayTitle = goal.title || goal.category;
 
+    // Calculate expected target position for marker
+    const expectedPercent = goal.expected_percent || 0;
+
     return (
         <div className={`rounded-xl border ${status.border} ${status.bg} p-5`}>
             <div className="flex items-start justify-between mb-3">
@@ -34,6 +38,11 @@ function GoalCard({ goal, onDelete }) {
                     <h3 className="font-semibold text-zinc-100 truncate">{displayTitle}</h3>
                     <p className="text-sm text-zinc-400">
                         {goal.title ? goal.category : ''} {goal.timeframe}
+                        {goal.days_passed && goal.total_days && (
+                            <span className="ml-2 text-zinc-500">
+                                (Day {goal.days_passed}/{goal.total_days})
+                            </span>
+                        )}
                     </p>
                 </div>
                 <button
@@ -44,24 +53,51 @@ function GoalCard({ goal, onDelete }) {
                 </button>
             </div>
 
-            {/* Progress bar */}
+            {/* Progress bar with expected marker */}
             <div className="mb-3">
                 <div className="flex justify-between text-sm mb-1.5">
                     <span className="text-zinc-400">{goal.hours_logged}h / {goal.target_value}h</span>
                     <span className={status.text}>{goal.progress_percent}%</span>
                 </div>
-                <div className="h-2.5 bg-zinc-800 rounded-full overflow-hidden">
+                <div className="relative h-2.5 bg-zinc-800 rounded-full overflow-hidden">
+                    {/* Actual progress */}
                     <div
                         className={`h-full ${status.text.replace('text-', 'bg-')} transition-all duration-500`}
                         style={{ width: `${Math.min(100, goal.progress_percent)}%` }}
                     />
+
+                    {/* Expected progress marker (Today's Target) */}
+                    {expectedPercent > 0 && expectedPercent < 100 && (
+                        <div
+                            className="absolute top-0 bottom-0 w-0.5 bg-white/60"
+                            style={{ left: `${expectedPercent}%` }}
+                            title={`Today's target: ${goal.expected_hours}h`}
+                        />
+                    )}
                 </div>
+
+                {/* Expected target label */}
+                {goal.expected_hours !== undefined && (
+                    <div className="flex justify-between text-xs mt-1 text-zinc-500">
+                        <span>Expected: {goal.expected_hours}h by today</span>
+                        {goal.hours_logged < goal.expected_hours && (
+                            <span className="text-amber-400">
+                                {(goal.expected_hours - goal.hours_logged).toFixed(1)}h behind
+                            </span>
+                        )}
+                        {goal.hours_logged >= goal.expected_hours && goal.status !== 'complete' && (
+                            <span className="text-emerald-400">
+                                {(goal.hours_logged - goal.expected_hours).toFixed(1)}h ahead
+                            </span>
+                        )}
+                    </div>
+                )}
             </div>
 
             {/* Status indicator */}
             <div className={`flex items-center gap-1.5 text-sm ${status.text}`}>
                 <StatusIcon className="w-4 h-4" />
-                <span className="capitalize">{goal.status.replace('_', ' ')}</span>
+                <span>{status.label}</span>
             </div>
         </div>
     );

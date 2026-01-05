@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, Link, useLocation } from 'react-router-dom';
 import {
   Zap, RefreshCw, AlertCircle, Wifi, WifiOff, LogOut,
-  Target, Trophy, User, Home
+  Target, Trophy, User, Home, CalendarDays
 } from 'lucide-react';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import LoginPage from './pages/LoginPage';
@@ -10,9 +10,11 @@ import RegisterPage from './pages/RegisterPage';
 import GoalsPage from './pages/GoalsPage';
 import LeaderboardPage from './pages/LeaderboardPage';
 import ProfilePage from './pages/ProfilePage';
+import HistoryPage from './pages/HistoryPage';
 import ActivityInput from './components/ActivityInput';
 import Timeline from './components/Timeline';
 import Dashboard from './components/Dashboard';
+import InterventionAlert from './components/InterventionAlert';
 import { logActivity, getActivities, getDashboard, deleteActivity, checkHealth } from './api';
 
 /**
@@ -104,6 +106,7 @@ function AppShell({ children }) {
             <nav className="flex items-center gap-1">
               <NavLink to="/" icon={Home} label="Home" />
               <NavLink to="/goals" icon={Target} label="Goals" />
+              <NavLink to="/history" icon={CalendarDays} label="History" />
               <NavLink to="/leaderboard" icon={Trophy} label="Leaderboard" />
               <NavLink to="/profile" icon={User} label="Profile" />
             </nav>
@@ -149,6 +152,9 @@ function AppShell({ children }) {
         </div>
       </header>
 
+      {/* Intervention Alert (Phase 4) */}
+      <InterventionAlert />
+
       {/* Main Content */}
       {children}
 
@@ -156,7 +162,7 @@ function AppShell({ children }) {
       <footer className="border-t border-zinc-800/50 mt-12 py-6">
         <div className="max-w-[1600px] mx-auto px-4 md:px-8">
           <p className="text-center text-sm text-zinc-600">
-            FocusFlow Phase 3 • Built with React, Flask & PostgreSQL
+            FocusFlow Phase 4 • Built with React, Flask & PostgreSQL
           </p>
         </div>
       </footer>
@@ -330,6 +336,18 @@ export default function App() {
                 <AppShell>
                   <PageWrapper>
                     <GoalsPage />
+                  </PageWrapper>
+                </AppShell>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/history"
+            element={
+              <ProtectedRoute>
+                <AppShell>
+                  <PageWrapper>
+                    <HistoryPage />
                   </PageWrapper>
                 </AppShell>
               </ProtectedRoute>

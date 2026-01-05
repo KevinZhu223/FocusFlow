@@ -36,6 +36,14 @@ class TimeframeEnum(PyEnum):
     MONTHLY = "monthly"
 
 
+class RarityEnum(PyEnum):
+    """Rarity levels for collectible items"""
+    COMMON = "Common"
+    RARE = "Rare"
+    LEGENDARY = "Legendary"
+    MYTHIC = "Mythic"
+
+
 class User(Base):
     """User model with authentication, gamification, and social features"""
     __tablename__ = 'users'
@@ -56,11 +64,20 @@ class User(Base):
     # Gamification (Phase 3)
     xp = Column(Integer, default=0)
     level = Column(Integer, default=1)
+    
+    # Watcher/Intervention (Phase 4)
+    daily_gaming_allowance = Column(Integer, default=60)  # Minutes allowed per day
+    today_gaming_minutes = Column(Integer, default=0)  # Minutes used today
+    last_gaming_reset = Column(DateTime, nullable=True)  # When gaming minutes were last reset
+    
+    # Loot Credits (Phase 4.5)
+    chest_credits = Column(Integer, default=0)  # Credits earned from productive work
 
     # Relationships
     activities = relationship("ActivityLog", back_populates="user", cascade="all, delete-orphan")
     goals = relationship("Goal", back_populates="user", cascade="all, delete-orphan")
     badges = relationship("UserBadge", back_populates="user", cascade="all, delete-orphan")
+    items = relationship("UserItem", back_populates="user", cascade="all, delete-orphan")
 
     def __repr__(self):
         return f"<User(id={self.id}, email='{self.email}', name='{self.name}', level={self.level})>"
@@ -78,7 +95,10 @@ class User(Base):
                 "bio": self.bio,
                 "is_public": self.is_public,
                 "xp": self.xp,
-                "created_at": self.created_at.isoformat() if self.created_at else None
+                "created_at": self.created_at.isoformat() if self.created_at else None,
+                "daily_gaming_allowance": self.daily_gaming_allowance,
+                "today_gaming_minutes": self.today_gaming_minutes,
+                "chest_credits": self.chest_credits or 0
             })
         return data
 
@@ -213,6 +233,60 @@ class UserBadge(Base):
             "badge_id": self.badge_id,
             "badge": self.badge.to_dict() if self.badge else None,
             "earned_at": self.earned_at.isoformat() if self.earned_at else None
+        }
+
+
+class Item(Base):
+    """Collectible items that users can earn from loot boxes"""
+    __tablename__ = 'items'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String(100), unique=True, nullable=False)
+    rarity = Column(Enum(RarityEnum), nullable=False)
+    image_emoji = Column(String(10), nullable=False)  # Emoji representation
+    description = Column(String(500), nullable=False)
+
+    # Relationship
+    user_items = relationship("UserItem", back_populates="item")
+
+    def __repr__(self):
+        return f"<Item(id={self.id}, name='{self.name}', rarity={self.rarity.value})>"
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "name": self.name,
+            "rarity": self.rarity.value if self.rarity else None,
+            "image_emoji": self.image_emoji,
+            "description": self.description
+        }
+
+
+class UserItem(Base):
+    """Junction table linking users to collected items with count"""
+    __tablename__ = 'user_items'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey('users.id'), nullable=False, index=True)
+    item_id = Column(Integer, ForeignKey('items.id'), nullable=False, index=True)
+    count = Column(Integer, default=1)  # How many of this item user has
+    first_obtained_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    # Relationships
+    user = relationship("User", back_populates="items")
+    item = relationship("Item", back_populates="user_items")
+
+    def __repr__(self):
+        return f"<UserItem(user_id={self.user_id}, item_id={self.item_id}, count={self.count})>"
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "user_id": self.user_id,
+            "item_id": self.item_id,
+            "item": self.item.to_dict() if self.item else None,
+            "count": self.count,
+            "first_obtained_at": self.first_obtained_at.isoformat() if self.first_obtained_at else None
         }
 
 

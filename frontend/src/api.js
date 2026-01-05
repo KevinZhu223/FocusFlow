@@ -290,6 +290,55 @@ export async function exportData() {
 }
 
 // ============================================
+// Intervention / Watcher API (Phase 4)
+// ============================================
+
+/**
+ * Get current intervention/gaming status
+ */
+export async function getInterventionStatus() {
+    const response = await fetch(`${API_BASE}/user/intervention_status`, {
+        headers: getHeaders(),
+    });
+    return handleResponse(response);
+}
+
+// ============================================
+// Loot Box / Collection API (Phase 4)
+// ============================================
+
+/**
+ * Check if user is eligible for a loot chest
+ */
+export async function getChestStatus() {
+    const response = await fetch(`${API_BASE}/user/chest_status`, {
+        headers: getHeaders(),
+    });
+    return handleResponse(response);
+}
+
+/**
+ * Open a loot chest
+ */
+export async function openChest() {
+    const response = await fetch(`${API_BASE}/user/open_chest`, {
+        method: 'POST',
+        headers: getHeaders(),
+    });
+    return handleResponse(response);
+}
+
+/**
+ * Get user's item collection
+ */
+export async function getCollection() {
+    const response = await fetch(`${API_BASE}/user/collection`, {
+        headers: getHeaders(),
+    });
+    return handleResponse(response);
+}
+
+// ============================================
 // Utility API
 // ============================================
 
@@ -300,3 +349,4 @@ export async function checkHealth() {
     const response = await fetch(`${API_BASE}/health`);
     return response.json();
 }
+

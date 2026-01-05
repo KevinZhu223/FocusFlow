@@ -7,10 +7,10 @@
 import { useState, useEffect } from 'react';
 import {
     User, Settings, Download, Loader2, Check, Edit2,
-    Award, Calendar, Activity, TrendingUp
+    Award, Calendar, Activity, TrendingUp, Package
 } from 'lucide-react';
 import * as LucideIcons from 'lucide-react';
-import { getProfile, updateProfile, exportData } from '../api';
+import { getProfile, updateProfile, exportData, getCollection } from '../api';
 
 // Badge icon mapping
 function getBadgeIcon(iconName) {
@@ -113,6 +113,104 @@ const AVATAR_COLORS = [
     '#6366f1', '#8b5cf6', '#ec4899', '#f43f5e', '#f97316',
     '#eab308', '#22c55e', '#10b981', '#14b8a6', '#06b6d4', '#3b82f6'
 ];
+
+const RARITY_COLORS = {
+    Common: { bg: 'bg-zinc-700', border: 'border-zinc-600', text: 'text-zinc-400' },
+    Rare: { bg: 'bg-blue-900/50', border: 'border-blue-500/50', text: 'text-blue-400' },
+    Legendary: { bg: 'bg-purple-900/50', border: 'border-purple-500/50', text: 'text-purple-400' },
+    Mythic: { bg: 'bg-amber-900/50', border: 'border-amber-500/50', text: 'text-amber-400' }
+};
+
+function VaultSection() {
+    const [collection, setCollection] = useState(null);
+    const [isLoading, setIsLoading] = useState(true);
+
+    useEffect(() => {
+        const fetchCollection = async () => {
+            try {
+                const res = await getCollection();
+                setCollection(res);
+            } catch (err) {
+                console.error('Failed to fetch collection:', err);
+            } finally {
+                setIsLoading(false);
+            }
+        };
+        fetchCollection();
+    }, []);
+
+    if (isLoading) {
+        return (
+            <div className="bg-zinc-900/50 border border-zinc-800/50 rounded-xl p-8">
+                <div className="flex items-center justify-center">
+                    <Loader2 className="w-6 h-6 animate-spin text-zinc-500" />
+                </div>
+            </div>
+        );
+    }
+
+    const allItems = collection?.all_items || [];
+
+    return (
+        <div>
+            <h2 className="text-xl font-semibold text-zinc-100 mb-4 flex items-center gap-2">
+                <Package className="w-6 h-6 text-amber-400" />
+                The Vault
+                <span className="text-sm font-normal text-zinc-500 ml-2">
+                    {collection?.owned_count || 0} / {collection?.total_items || 0} collected
+                </span>
+            </h2>
+            <div className="grid grid-cols-4 sm:grid-cols-5 md:grid-cols-7 lg:grid-cols-10 gap-3">
+                {allItems.map(item => {
+                    const rarity = RARITY_COLORS[item.rarity] || RARITY_COLORS.Common;
+                    const owned = item.owned;
+
+                    return (
+                        <div
+                            key={item.id}
+                            className={`relative aspect-square rounded-xl border-2 flex items-center justify-center
+                                      transition-all cursor-pointer group
+                                      ${owned
+                                    ? `${rarity.bg} ${rarity.border} hover:scale-105`
+                                    : 'bg-zinc-800/50 border-zinc-700/50 opacity-40'}`}
+                            title={owned ? `${item.name} (${item.rarity})` : '???'}
+                        >
+                            <span className={`text-3xl ${owned ? '' : 'grayscale blur-sm'}`}>
+                                {item.image_emoji}
+                            </span>
+
+                            {/* Count badge */}
+                            {owned && item.count > 1 && (
+                                <div className="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-indigo-500 
+                                              flex items-center justify-center text-xs text-white font-bold">
+                                    {item.count}
+                                </div>
+                            )}
+
+                            {/* Hover tooltip */}
+                            {owned && (
+                                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1
+                                              bg-zinc-800 border border-zinc-700 rounded-lg text-xs text-center
+                                              opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none
+                                              whitespace-nowrap z-10">
+                                    <div className={rarity.text}>{item.name}</div>
+                                    <div className="text-zinc-500">{item.rarity}</div>
+                                </div>
+                            )}
+
+                            {/* Question mark for unowned */}
+                            {!owned && (
+                                <div className="absolute inset-0 flex items-center justify-center text-zinc-600 text-2xl">
+                                    ?
+                                </div>
+                            )}
+                        </div>
+                    );
+                })}
+            </div>
+        </div>
+    );
+}
 
 export default function ProfilePage() {
     const [profile, setProfile] = useState(null);
@@ -309,6 +407,9 @@ export default function ProfilePage() {
                 </h2>
                 <BadgeGrid badges={profile?.badges} />
             </div>
+
+            {/* The Vault - Collection */}
+            <VaultSection />
 
             {/* Data Export */}
             <div className="bg-zinc-900/50 border border-zinc-800/50 rounded-xl p-5">

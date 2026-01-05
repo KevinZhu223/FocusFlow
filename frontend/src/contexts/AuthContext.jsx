@@ -37,6 +37,10 @@ export function AuthProvider({ children }) {
         setError(null);
         try {
             const response = await apiLogin(email, password);
+            // Save token to localStorage FIRST before React state
+            if (response.token) {
+                localStorage.setItem('focusflow_token', response.token);
+            }
             setToken(response.token);
             setUser(response.user);
             return response;
@@ -53,6 +57,10 @@ export function AuthProvider({ children }) {
         setError(null);
         try {
             const response = await apiRegister(email, name, password);
+            // Save token to localStorage FIRST before React state
+            if (response.token) {
+                localStorage.setItem('focusflow_token', response.token);
+            }
             setToken(response.token);
             setUser(response.user);
             return response;

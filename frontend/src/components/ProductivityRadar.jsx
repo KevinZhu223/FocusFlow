@@ -58,7 +58,7 @@ export default function ProductivityRadar({ dashboardData }) {
     return (
         <div className="bg-zinc-900/50 border border-zinc-800/50 rounded-xl p-4">
             <h3 className="text-sm font-medium text-zinc-300 mb-2">Life Balance</h3>
-            <div className="h-48">
+            <div className="h-48" style={{ minHeight: '192px', minWidth: '0' }}>
                 <ResponsiveContainer width="100%" height="100%">
                     <RadarChart data={radarData} margin={{ top: 10, right: 30, bottom: 10, left: 30 }}>
                         <PolarGrid stroke="#27272a" />
