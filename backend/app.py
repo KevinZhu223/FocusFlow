@@ -466,15 +466,21 @@ def get_goals():
             expected_hours = round((goal.target_value / total_days) * days_passed, 1)
             expected_percent = min(100, round((expected_hours / goal.target_value) * 100, 1))
             
-            # Determine status based on pacing
+            # Determine status based on pacing and day of week
             if progress_percent >= 100:
                 pacing_status = "complete"
             elif hours_logged >= expected_hours:
                 pacing_status = "on_track"
             elif hours_logged >= expected_hours * 0.7:
                 pacing_status = "slightly_behind"
-            else:
+            # Before Thursday (day 4), show "not_started" if < 10% progress
+            elif days_passed < 4 and progress_percent < 10:
+                pacing_status = "not_started"
+            # After Thursday and < 50%, show at_risk
+            elif days_passed >= 4 and progress_percent < 50:
                 pacing_status = "at_risk"
+            else:
+                pacing_status = "slightly_behind"
             
             goal_data = goal.to_dict()
             goal_data["hours_logged"] = hours_logged
@@ -526,28 +532,15 @@ def create_goal():
     try:
         user = get_current_user(session)
         
-        # Check if goal for this category/timeframe already exists
-        existing = session.query(Goal).filter(
-            Goal.user_id == user.id,
-            Goal.category == category,
-            Goal.timeframe == timeframe
-        ).first()
-        
-        if existing:
-            # Update existing goal
-            existing.target_value = int(data['target_value'])
-            existing.title = title or existing.title  # Keep old title if not provided
-            goal = existing
-        else:
-            # Create new goal
-            goal = Goal(
-                user_id=user.id,
-                title=title,
-                category=category,
-                target_value=int(data['target_value']),
-                timeframe=timeframe
-            )
-            session.add(goal)
+        # Always create new goal (allowing multiple goals per category)
+        goal = Goal(
+            user_id=user.id,
+            title=title,
+            category=category,
+            target_value=int(data['target_value']),
+            timeframe=timeframe
+        )
+        session.add(goal)
         
         session.commit()
         
@@ -970,8 +963,201 @@ def get_user_collection():
         session.close()
 
 
+# ============================================================================
+# FRIEND SYSTEM (Phase 5)
+# ============================================================================
+
+@app.route('/api/friends', methods=['GET'])
+def get_friends():
+    """Get all friends and pending requests for the current user."""
+    from models import Friendship, FriendshipStatusEnum
+    
+    session = Session()
+    try:
+        user = get_current_user(session)
+        
+        # Get accepted friendships (both directions)
+        friends_as_requester = session.query(Friendship).filter(
+            Friendship.user_id == user.id,
+            Friendship.status == FriendshipStatusEnum.ACCEPTED
+        ).all()
+        
+        friends_as_receiver = session.query(Friendship).filter(
+            Friendship.friend_id == user.id,
+            Friendship.status == FriendshipStatusEnum.ACCEPTED
+        ).all()
+        
+        # Get pending requests TO this user (received)
+        pending_received = session.query(Friendship).filter(
+            Friendship.friend_id == user.id,
+            Friendship.status == FriendshipStatusEnum.PENDING
+        ).all()
+        
+        # Get pending requests FROM this user (sent)
+        pending_sent = session.query(Friendship).filter(
+            Friendship.user_id == user.id,
+            Friendship.status == FriendshipStatusEnum.PENDING
+        ).all()
+        
+        # Build friend list
+        friends = []
+        for f in friends_as_requester:
+            friends.append({
+                "friendship_id": f.id,
+                "user": f.receiver.to_dict(include_private=False) if f.receiver else None
+            })
+        for f in friends_as_receiver:
+            friends.append({
+                "friendship_id": f.id,
+                "user": f.requester.to_dict(include_private=False) if f.requester else None
+            })
+        
+        return jsonify({
+            "friends": friends,
+            "pending_received": [f.to_dict(include_user=True) for f in pending_received],
+            "pending_sent": [f.to_dict(include_friend=True) for f in pending_sent]
+        })
+        
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        session.close()
+
+
+@app.route('/api/friends/request', methods=['POST'])
+def send_friend_request():
+    """Send a friend request by email."""
+    from models import Friendship, FriendshipStatusEnum
+    
+    data = request.get_json()
+    email = data.get('email', '').strip().lower() if data else None
+    
+    if not email:
+        return jsonify({"error": "Email is required"}), 400
+    
+    session = Session()
+    try:
+        user = get_current_user(session)
+        
+        # Can't friend yourself
+        if user.email.lower() == email:
+            return jsonify({"error": "Cannot send friend request to yourself"}), 400
+        
+        # Find target user
+        target_user = session.query(User).filter(
+            User.email.ilike(email)
+        ).first()
+        
+        if not target_user:
+            return jsonify({"error": "User not found"}), 404
+        
+        # Check for existing friendship or request
+        existing = session.query(Friendship).filter(
+            ((Friendship.user_id == user.id) & (Friendship.friend_id == target_user.id)) |
+            ((Friendship.user_id == target_user.id) & (Friendship.friend_id == user.id))
+        ).first()
+        
+        if existing:
+            if existing.status == FriendshipStatusEnum.ACCEPTED:
+                return jsonify({"error": "Already friends with this user"}), 400
+            else:
+                return jsonify({"error": "Friend request already pending"}), 400
+        
+        # Create friend request
+        friendship = Friendship(
+            user_id=user.id,
+            friend_id=target_user.id,
+            status=FriendshipStatusEnum.PENDING
+        )
+        session.add(friendship)
+        session.commit()
+        
+        return jsonify({
+            "success": True,
+            "message": f"Friend request sent to {target_user.name}",
+            "friendship": friendship.to_dict(include_friend=True)
+        }), 201
+        
+    except Exception as e:
+        session.rollback()
+        return jsonify({"error": str(e)}), 500
+    finally:
+        session.close()
+
+
+@app.route('/api/friends/accept', methods=['POST'])
+def accept_friend_request():
+    """Accept a pending friend request."""
+    from models import Friendship, FriendshipStatusEnum
+    
+    data = request.get_json()
+    friendship_id = data.get('friendship_id') if data else None
+    
+    if not friendship_id:
+        return jsonify({"error": "friendship_id is required"}), 400
+    
+    session = Session()
+    try:
+        user = get_current_user(session)
+        
+        # Find the pending request TO this user
+        friendship = session.query(Friendship).filter(
+            Friendship.id == friendship_id,
+            Friendship.friend_id == user.id,  # Must be the receiver
+            Friendship.status == FriendshipStatusEnum.PENDING
+        ).first()
+        
+        if not friendship:
+            return jsonify({"error": "Friend request not found"}), 404
+        
+        friendship.status = FriendshipStatusEnum.ACCEPTED
+        session.commit()
+        
+        return jsonify({
+            "success": True,
+            "message": f"Now friends with {friendship.requester.name}",
+            "friendship": friendship.to_dict(include_user=True)
+        })
+        
+    except Exception as e:
+        session.rollback()
+        return jsonify({"error": str(e)}), 500
+    finally:
+        session.close()
+
+
+@app.route('/api/friends/<int:friendship_id>', methods=['DELETE'])
+def remove_friend(friendship_id):
+    """Remove a friend or decline a request."""
+    from models import Friendship
+    
+    session = Session()
+    try:
+        user = get_current_user(session)
+        
+        # Find the friendship (either direction)
+        friendship = session.query(Friendship).filter(
+            Friendship.id == friendship_id,
+            (Friendship.user_id == user.id) | (Friendship.friend_id == user.id)
+        ).first()
+        
+        if not friendship:
+            return jsonify({"error": "Friendship not found"}), 404
+        
+        session.delete(friendship)
+        session.commit()
+        
+        return jsonify({"success": True, "message": "Friend removed"})
+        
+    except Exception as e:
+        session.rollback()
+        return jsonify({"error": str(e)}), 500
+    finally:
+        session.close()
+
+
 if __name__ == '__main__':
-    print("Starting FocusFlow API Server (Phase 4)...")
+    print("Starting FocusFlow API Server (Phase 5)...")
     print(f"Database: {DATABASE_URL}")
     
     # Auto-seed items and badges if empty

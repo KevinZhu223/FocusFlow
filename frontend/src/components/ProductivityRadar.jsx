@@ -48,7 +48,7 @@ export default function ProductivityRadar({ dashboardData }) {
         return (
             <div className="bg-zinc-900/50 border border-zinc-800/50 rounded-xl p-4">
                 <h3 className="text-sm font-medium text-zinc-300 mb-4">Life Balance</h3>
-                <div className="h-48 flex items-center justify-center text-zinc-600 text-sm">
+                <div className="h-80 flex items-center justify-center text-zinc-600 text-sm">
                     No activity data yet
                 </div>
             </div>
@@ -58,9 +58,9 @@ export default function ProductivityRadar({ dashboardData }) {
     return (
         <div className="bg-zinc-900/50 border border-zinc-800/50 rounded-xl p-4">
             <h3 className="text-sm font-medium text-zinc-300 mb-2">Life Balance</h3>
-            <div className="h-48" style={{ minHeight: '192px', minWidth: '0' }}>
+            <div className="h-80" style={{ minHeight: '320px', minWidth: '0' }}>
                 <ResponsiveContainer width="100%" height="100%">
-                    <RadarChart data={radarData} margin={{ top: 10, right: 30, bottom: 10, left: 30 }}>
+                    <RadarChart data={radarData} margin={{ top: 20, right: 40, bottom: 20, left: 40 }}>
                         <PolarGrid stroke="#27272a" />
                         <PolarAngleAxis
                             dataKey="category"

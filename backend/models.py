@@ -44,6 +44,12 @@ class RarityEnum(PyEnum):
     MYTHIC = "Mythic"
 
 
+class FriendshipStatusEnum(PyEnum):
+    """Status of a friendship request"""
+    PENDING = "pending"
+    ACCEPTED = "accepted"
+
+
 class User(Base):
     """User model with authentication, gamification, and social features"""
     __tablename__ = 'users'
@@ -288,6 +294,38 @@ class UserItem(Base):
             "count": self.count,
             "first_obtained_at": self.first_obtained_at.isoformat() if self.first_obtained_at else None
         }
+
+
+class Friendship(Base):
+    """Friendship model for tracking friend relationships"""
+    __tablename__ = 'friendships'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey('users.id'), nullable=False, index=True)  # Requester
+    friend_id = Column(Integer, ForeignKey('users.id'), nullable=False, index=True)  # Receiver
+    status = Column(Enum(FriendshipStatusEnum), default=FriendshipStatusEnum.PENDING, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    # Relationships
+    requester = relationship("User", foreign_keys=[user_id], backref="sent_requests")
+    receiver = relationship("User", foreign_keys=[friend_id], backref="received_requests")
+
+    def __repr__(self):
+        return f"<Friendship(user_id={self.user_id}, friend_id={self.friend_id}, status={self.status})>"
+
+    def to_dict(self, include_user=False, include_friend=False):
+        data = {
+            "id": self.id,
+            "user_id": self.user_id,
+            "friend_id": self.friend_id,
+            "status": self.status.value,
+            "created_at": self.created_at.isoformat() if self.created_at else None
+        }
+        if include_user and self.requester:
+            data["requester"] = self.requester.to_dict(include_private=False)
+        if include_friend and self.receiver:
+            data["receiver"] = self.receiver.to_dict(include_private=False)
+        return data
 
 
 def init_db(database_url: str):

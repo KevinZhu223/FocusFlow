@@ -1,16 +1,18 @@
 /**
  * FocusFlow - Enhanced Dashboard
  * Phase 2: Includes Radar Chart, Energy Battery, Coach Insight, and Category Breakdown
- * Phase 4: Added Loot Button for daily chest
+ * Phase 6: Compact loot button, CorrelationCard, refined layout
  */
 
+import { useState, useEffect } from 'react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from 'recharts';
-import { TrendingUp, TrendingDown, Minus, Activity, Zap, Target } from 'lucide-react';
+import { TrendingUp, TrendingDown, Minus, Activity, Zap, Target, Gift, Key } from 'lucide-react';
 import ProductivityRadar from './ProductivityRadar';
 import EnergyBattery from './EnergyBattery';
 import CoachInsight from './CoachInsight';
-import ActivityHeatmap from './ActivityHeatmap';
 import LootButton from './LootButton';
+import CorrelationCard from './CorrelationCard';
+import { useAuth } from '../contexts/AuthContext';
 
 /**
  * Category colors for the pie chart
@@ -61,11 +63,15 @@ function CustomLegend({ payload }) {
 }
 
 /**
- * Score Display Component
+ * Score Display Component with Loot Button integrated
  */
-function ScoreDisplay({ score, label, Icon }) {
+function ScoreDisplay({ score, label, Icon, showLootButton = false }) {
+    const { user } = useAuth();
+    const [showLoot, setShowLoot] = useState(false);
+
     const isPositive = score > 0;
     const isNegative = score < 0;
+    const credits = user?.chest_credits || 0;
 
     const getScoreColor = () => {
         if (isPositive) return 'text-emerald-400';
@@ -86,18 +92,52 @@ function ScoreDisplay({ score, label, Icon }) {
         (Number.isInteger(score) ? score : score.toFixed(1)) : score;
 
     return (
-        <div className="bg-zinc-900/50 border border-zinc-800/50 rounded-xl p-4">
-            <div className="flex items-center gap-2 mb-2">
-                <Icon className={`w-4 h-4 ${getIconColor()}`} />
-                <span className="text-sm text-zinc-400">{label}</span>
+        <>
+            <div className="bg-zinc-900/50 border border-zinc-800/50 rounded-xl p-4 relative">
+                <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2">
+                        <Icon className={`w-4 h-4 ${getIconColor()}`} />
+                        <span className="text-sm text-zinc-400">{label}</span>
+                    </div>
+
+                    {/* Compact Loot Button */}
+                    {showLootButton && (
+                        <button
+                            onClick={() => setShowLoot(true)}
+                            className={`relative p-2 rounded-lg transition-all
+                                      ${credits > 0
+                                    ? 'bg-amber-500/20 text-amber-400 hover:bg-amber-500/30 animate-pulse hover:animate-none'
+                                    : 'bg-zinc-800 text-zinc-500 hover:bg-zinc-700'}`}
+                            title={credits > 0 ? `Open Chest (${credits} keys)` : 'No keys available'}
+                        >
+                            <Gift className="w-5 h-5" />
+                            {credits > 0 && (
+                                <span className="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-amber-500 
+                                               flex items-center justify-center text-xs text-black font-bold">
+                                    {credits}
+                                </span>
+                            )}
+                        </button>
+                    )}
+                </div>
+                <div className="flex items-center gap-2">
+                    <span className={`text-3xl font-bold ${getScoreColor()}`}>
+                        {score > 0 ? '+' : ''}{displayScore}
+                    </span>
+                    <ScoreIcon className={`w-5 h-5 ${getScoreColor()}`} />
+                </div>
             </div>
-            <div className="flex items-center gap-2">
-                <span className={`text-3xl font-bold ${getScoreColor()}`}>
-                    {score > 0 ? '+' : ''}{displayScore}
-                </span>
-                <ScoreIcon className={`w-5 h-5 ${getScoreColor()}`} />
-            </div>
-        </div>
+
+            {/* Loot Modal */}
+            {showLoot && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm"
+                    onClick={() => setShowLoot(false)}>
+                    <div onClick={e => e.stopPropagation()}>
+                        <LootButton embedded onClose={() => setShowLoot(false)} />
+                    </div>
+                </div>
+            )}
+        </>
     );
 }
 
@@ -157,12 +197,13 @@ export default function Dashboard({ dashboardData, isLoading }) {
             {/* Energy Battery */}
             <EnergyBattery dashboardData={dashboardData} />
 
-            {/* Score Cards */}
+            {/* Score Cards with integrated loot button */}
             <div className="grid grid-cols-2 gap-3">
                 <ScoreDisplay
                     score={dashboardData?.daily_score || 0}
                     label="Daily Score"
                     Icon={Zap}
+                    showLootButton={true}
                 />
                 <StatCard
                     value={dashboardData?.activity_count || 0}
@@ -174,12 +215,6 @@ export default function Dashboard({ dashboardData, isLoading }) {
 
             {/* Productivity Radar */}
             <ProductivityRadar dashboardData={dashboardData} />
-
-            {/* Activity Heatmap */}
-            <ActivityHeatmap />
-
-            {/* Daily Loot Chest */}
-            <LootButton />
 
             {/* Pie Chart - Category Breakdown */}
             <div className="bg-zinc-900/50 border border-zinc-800/50 rounded-xl p-4">
@@ -222,6 +257,9 @@ export default function Dashboard({ dashboardData, isLoading }) {
                     </div>
                 )}
             </div>
+
+            {/* Correlation Card - Data Science Insight */}
+            <CorrelationCard />
         </div>
     );
 }

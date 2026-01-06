@@ -4,7 +4,10 @@
  */
 
 import { useState, useEffect } from 'react';
-import { Target, Plus, Trash2, TrendingUp, AlertTriangle, CheckCircle, Loader2 } from 'lucide-react';
+import {
+    Target, Plus, Trash2, TrendingUp, AlertTriangle, CheckCircle, Loader2,
+    Briefcase, Dumbbell, Users, Home, Gamepad2
+} from 'lucide-react';
 import { getGoals, createGoal, deleteGoal } from '../api';
 
 const CATEGORIES = ['Career', 'Health', 'Social', 'Chores', 'Leisure'];
@@ -13,10 +16,19 @@ const TIMEFRAMES = [
     { value: 'monthly', label: 'Monthly' }
 ];
 
+const CATEGORY_ICONS = {
+    Career: Briefcase,
+    Health: Dumbbell,
+    Social: Users,
+    Chores: Home,
+    Leisure: Gamepad2
+};
+
 const STATUS_STYLES = {
     complete: { bg: 'bg-emerald-500/20', border: 'border-emerald-500/50', text: 'text-emerald-400', icon: CheckCircle, label: 'Complete' },
     on_track: { bg: 'bg-lime-500/20', border: 'border-lime-500/50', text: 'text-lime-400', icon: TrendingUp, label: 'On Track' },
     slightly_behind: { bg: 'bg-amber-500/20', border: 'border-amber-500/50', text: 'text-amber-400', icon: AlertTriangle, label: 'Slightly Behind' },
+    not_started: { bg: 'bg-zinc-500/20', border: 'border-zinc-500/50', text: 'text-zinc-400', icon: Target, label: 'Not Started' },
     at_risk: { bg: 'bg-red-500/20', border: 'border-red-500/50', text: 'text-red-400', icon: AlertTriangle, label: 'At Risk' },
     behind: { bg: 'bg-red-500/20', border: 'border-red-500/50', text: 'text-red-400', icon: AlertTriangle, label: 'Behind' }
 };
@@ -24,6 +36,7 @@ const STATUS_STYLES = {
 function GoalCard({ goal, onDelete }) {
     const status = STATUS_STYLES[goal.status] || STATUS_STYLES.behind;
     const StatusIcon = status.icon;
+    const CategoryIcon = CATEGORY_ICONS[goal.category] || Target;
 
     // Use title if available, otherwise category
     const displayTitle = goal.title || goal.category;
@@ -34,16 +47,22 @@ function GoalCard({ goal, onDelete }) {
     return (
         <div className={`rounded-xl border ${status.border} ${status.bg} p-5`}>
             <div className="flex items-start justify-between mb-3">
-                <div className="min-w-0 flex-1">
-                    <h3 className="font-semibold text-zinc-100 truncate">{displayTitle}</h3>
-                    <p className="text-sm text-zinc-400">
-                        {goal.title ? goal.category : ''} {goal.timeframe}
-                        {goal.days_passed && goal.total_days && (
-                            <span className="ml-2 text-zinc-500">
-                                (Day {goal.days_passed}/{goal.total_days})
-                            </span>
-                        )}
-                    </p>
+                <div className="flex items-center gap-3 min-w-0 flex-1">
+                    <div className={`w-10 h-10 rounded-lg ${status.bg} ${status.border} border 
+                                   flex items-center justify-center shrink-0`}>
+                        <CategoryIcon className={`w-5 h-5 ${status.text}`} />
+                    </div>
+                    <div className="min-w-0">
+                        <h3 className="font-semibold text-zinc-100 truncate">{displayTitle}</h3>
+                        <p className="text-sm text-zinc-400">
+                            {goal.title ? goal.category : ''} {goal.timeframe}
+                            {goal.days_passed && goal.total_days && (
+                                <span className="ml-2 text-zinc-500">
+                                    (Day {goal.days_passed}/{goal.total_days})
+                                </span>
+                            )}
+                        </p>
+                    </div>
                 </div>
                 <button
                     onClick={() => onDelete(goal.id)}
@@ -78,15 +97,15 @@ function GoalCard({ goal, onDelete }) {
 
                 {/* Expected target label */}
                 {goal.expected_hours !== undefined && (
-                    <div className="flex justify-between text-xs mt-1 text-zinc-500">
-                        <span>Expected: {goal.expected_hours}h by today</span>
+                    <div className="flex justify-between text-sm mt-2 text-zinc-400">
+                        <span>Expected: <strong>{goal.expected_hours}h</strong> by today</span>
                         {goal.hours_logged < goal.expected_hours && (
-                            <span className="text-amber-400">
+                            <span className="text-amber-400 font-medium">
                                 {(goal.expected_hours - goal.hours_logged).toFixed(1)}h behind
                             </span>
                         )}
                         {goal.hours_logged >= goal.expected_hours && goal.status !== 'complete' && (
-                            <span className="text-emerald-400">
+                            <span className="text-emerald-400 font-medium">
                                 {(goal.hours_logged - goal.expected_hours).toFixed(1)}h ahead
                             </span>
                         )}

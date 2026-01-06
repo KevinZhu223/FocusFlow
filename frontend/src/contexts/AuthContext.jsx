@@ -77,6 +77,11 @@ export function AuthProvider({ children }) {
         setUser(null);
     }, []);
 
+    // Update user data (for instant state sync)
+    const updateUser = useCallback((userData) => {
+        setUser(prevUser => ({ ...prevUser, ...userData }));
+    }, []);
+
     const value = {
         user,
         isLoading,
@@ -85,6 +90,7 @@ export function AuthProvider({ children }) {
         login,
         register,
         logout,
+        updateUser,
     };
 
     return (

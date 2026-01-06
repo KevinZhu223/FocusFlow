@@ -181,18 +181,8 @@ export default function HistoryPage() {
     };
 
     const getTileContent = ({ date, view }) => {
-        if (view !== 'month') return null;
-
-        const dateKey = date.toLocaleDateString('en-CA');
-        const dayData = activityData[dateKey];
-
-        if (dayData && dayData.activities.length > 0) {
-            return (
-                <div className="activity-dot-container">
-                    <div className={`activity-dot ${getDateColor(dayData.totalScore)}`} />
-                </div>
-            );
-        }
+        // Tile background already shows productivity color
+        // No need for additional dots
         return null;
     };
 
@@ -218,26 +208,26 @@ export default function HistoryPage() {
                 </div>
             </div>
 
-            {/* Legend */}
-            <div className="flex items-center gap-6 text-sm text-zinc-500">
-                <div className="flex items-center gap-2">
-                    <div className="w-3 h-3 rounded-full bg-emerald-500" />
+            {/* Legend - Compact */}
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-zinc-500">
+                <div className="flex items-center gap-1.5">
+                    <div className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
                     <span>High (50+)</span>
                 </div>
-                <div className="flex items-center gap-2">
-                    <div className="w-3 h-3 rounded-full bg-yellow-500" />
+                <div className="flex items-center gap-1.5">
+                    <div className="w-2.5 h-2.5 rounded-full bg-yellow-500" />
                     <span>Medium (20-49)</span>
                 </div>
-                <div className="flex items-center gap-2">
-                    <div className="w-3 h-3 rounded-full bg-orange-500" />
+                <div className="flex items-center gap-1.5">
+                    <div className="w-2.5 h-2.5 rounded-full bg-orange-500" />
                     <span>Low (1-19)</span>
                 </div>
-                <div className="flex items-center gap-2">
-                    <div className="w-3 h-3 rounded-full bg-red-500" />
+                <div className="flex items-center gap-1.5">
+                    <div className="w-2.5 h-2.5 rounded-full bg-red-500" />
                     <span>Negative</span>
                 </div>
-                <div className="flex items-center gap-2">
-                    <div className="w-3 h-3 rounded-full bg-zinc-600" />
+                <div className="flex items-center gap-1.5">
+                    <div className="w-2.5 h-2.5 rounded-full bg-zinc-600" />
                     <span>No data</span>
                 </div>
             </div>
@@ -310,9 +300,16 @@ export default function HistoryPage() {
                     text-decoration: none;
                 }
                 
+                .focusflow-calendar .react-calendar__month-view__days {
+                    display: grid !important;
+                    grid-template-columns: repeat(7, 1fr);
+                    gap: 4px;
+                }
+                
                 .focusflow-calendar .react-calendar__tile {
                     color: #a1a1aa;
-                    background: transparent;
+                    background: #18181b;
+                    border: 1px solid #27272a;
                     padding: 1rem 0.5rem;
                     border-radius: 0.75rem;
                     position: relative;
@@ -321,40 +318,42 @@ export default function HistoryPage() {
                     flex-direction: column;
                     align-items: center;
                     justify-content: center;
+                    max-width: none !important;
+                    flex-basis: auto !important;
                 }
                 
                 .focusflow-calendar .react-calendar__tile:hover {
                     background: rgba(99, 102, 241, 0.2);
                 }
                 
+                /* Current day - just bold font, no purple background or border */
                 .focusflow-calendar .react-calendar__tile--now {
-                    background: rgba(99, 102, 241, 0.3);
-                    color: #e4e4e7;
-                    font-weight: 600;
+                    font-weight: 700;
                 }
                 
+                /* Selected/clicked day - remove all purple styling */
                 .focusflow-calendar .react-calendar__tile--active {
-                    background: #6366f1 !important;
-                    color: white !important;
+                    /* No special styling - productivity colors should show */
                 }
                 
+                /* Productivity score colors - these should take priority */
                 .focusflow-calendar .react-calendar__tile.score-green {
-                    background: rgba(16, 185, 129, 0.2);
+                    background: rgba(16, 185, 129, 0.4) !important;
                     color: #34d399;
                 }
                 
                 .focusflow-calendar .react-calendar__tile.score-yellow {
-                    background: rgba(234, 179, 8, 0.2);
+                    background: rgba(234, 179, 8, 0.4) !important;
                     color: #facc15;
                 }
                 
                 .focusflow-calendar .react-calendar__tile.score-orange {
-                    background: rgba(249, 115, 22, 0.2);
+                    background: rgba(249, 115, 22, 0.4) !important;
                     color: #fb923c;
                 }
                 
                 .focusflow-calendar .react-calendar__tile.score-red {
-                    background: rgba(239, 68, 68, 0.2);
+                    background: rgba(239, 68, 68, 0.4) !important;
                     color: #f87171;
                 }
                 

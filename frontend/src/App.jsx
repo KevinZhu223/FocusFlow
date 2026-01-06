@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, Link, useLocation } from 'react-router-dom';
 import {
   Zap, RefreshCw, AlertCircle, Wifi, WifiOff, LogOut,
-  Target, Trophy, User, Home, CalendarDays
+  Target, Trophy, User, Home, CalendarDays, Users
 } from 'lucide-react';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import LoginPage from './pages/LoginPage';
@@ -11,6 +11,7 @@ import GoalsPage from './pages/GoalsPage';
 import LeaderboardPage from './pages/LeaderboardPage';
 import ProfilePage from './pages/ProfilePage';
 import HistoryPage from './pages/HistoryPage';
+import SocialPage from './pages/SocialPage';
 import ActivityInput from './components/ActivityInput';
 import Timeline from './components/Timeline';
 import Dashboard from './components/Dashboard';
@@ -107,6 +108,7 @@ function AppShell({ children }) {
               <NavLink to="/" icon={Home} label="Home" />
               <NavLink to="/goals" icon={Target} label="Goals" />
               <NavLink to="/history" icon={CalendarDays} label="History" />
+              <NavLink to="/social" icon={Users} label="Friends" />
               <NavLink to="/leaderboard" icon={Trophy} label="Leaderboard" />
               <NavLink to="/profile" icon={User} label="Profile" />
             </nav>
@@ -174,6 +176,7 @@ function AppShell({ children }) {
  * Home Page Content (Activity Logging)
  */
 function HomePage() {
+  const { updateUser } = useAuth();
   const [activities, setActivities] = useState([]);
   const [dashboardData, setDashboardData] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -219,6 +222,11 @@ function HomePage() {
       if (result.gamification?.leveled_up) {
         // Could show a toast/notification here
         console.log('Level up!', result.gamification);
+      }
+
+      // Instantly update user chest credits without page refresh
+      if (result.credits_earned !== undefined) {
+        updateUser({ chest_credits: result.total_credits });
       }
 
       const dashboardRes = await getDashboard();
@@ -348,6 +356,18 @@ export default function App() {
                 <AppShell>
                   <PageWrapper>
                     <HistoryPage />
+                  </PageWrapper>
+                </AppShell>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/social"
+            element={
+              <ProtectedRoute>
+                <AppShell>
+                  <PageWrapper>
+                    <SocialPage />
                   </PageWrapper>
                 </AppShell>
               </ProtectedRoute>

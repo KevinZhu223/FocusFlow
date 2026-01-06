@@ -5,7 +5,8 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { Gift, Sparkles, X, Loader2, Key } from 'lucide-react';
-import { getProfile, openChest, getCollection } from '../api';
+import { openChest } from '../api';
+import { useAuth } from '../contexts/AuthContext';
 
 const RARITY_COLORS = {
     Common: { bg: 'bg-zinc-500', border: 'border-zinc-400', text: 'text-zinc-300', glow: '' },
@@ -146,25 +147,18 @@ function SpinnerModal({ wonItem, onComplete }) {
     );
 }
 
-export default function LootButton() {
-    const [credits, setCredits] = useState(0);
+export default function LootButton({ embedded = false, onClose = null }) {
+    const { user, updateUser } = useAuth();
+    const [credits, setCredits] = useState(user?.chest_credits || 0);
     const [isOpening, setIsOpening] = useState(false);
     const [showSpinner, setShowSpinner] = useState(false);
     const [wonItem, setWonItem] = useState(null);
     const [showResult, setShowResult] = useState(false);
 
+    // Sync credits from user context
     useEffect(() => {
-        fetchCredits();
-    }, []);
-
-    const fetchCredits = async () => {
-        try {
-            const profile = await getProfile();
-            setCredits(profile.user?.chest_credits || 0);
-        } catch (err) {
-            console.error('Failed to fetch credits:', err);
-        }
-    };
+        setCredits(user?.chest_credits || 0);
+    }, [user?.chest_credits]);
 
     const handleOpenChest = async () => {
         if (credits <= 0) return;
@@ -173,7 +167,10 @@ export default function LootButton() {
         try {
             const result = await openChest();
             if (result.success && result.item) {
-                setCredits(result.credits_remaining || credits - 1);
+                const newCredits = result.credits_remaining ?? credits - 1;
+                setCredits(newCredits);
+                // Update global user context so Dashboard badge updates
+                updateUser({ chest_credits: newCredits });
                 setWonItem(result.item);
                 setShowSpinner(true);
             }
@@ -192,6 +189,13 @@ export default function LootButton() {
     const closeResult = () => {
         setShowResult(false);
         setWonItem(null);
+    };
+
+    const handleSpinAgain = async () => {
+        setShowResult(false);
+        setWonItem(null);
+        // Immediately open another chest
+        await handleOpenChest();
     };
 
     const rarity = wonItem ? (RARITY_COLORS[wonItem.rarity] || RARITY_COLORS.Common) : null;
@@ -273,13 +277,23 @@ export default function LootButton() {
                             <p className="text-zinc-400 mt-2 text-sm">{wonItem.description}</p>
                         </div>
 
-                        <div className="p-4 border-t border-zinc-800">
+                        <div className="p-4 border-t border-zinc-800 flex gap-3">
+                            {credits > 0 && (
+                                <button
+                                    onClick={handleSpinAgain}
+                                    className="flex-1 py-3 rounded-xl font-medium text-white bg-indigo-600
+                                              hover:bg-indigo-700 transition-colors flex items-center justify-center gap-2"
+                                >
+                                    <Sparkles className="w-4 h-4" />
+                                    Spin Again (-1)
+                                </button>
+                            )}
                             <button
                                 onClick={closeResult}
-                                className={`w-full py-3 rounded-xl font-medium text-white ${rarity.bg}
+                                className={`flex-1 py-3 rounded-xl font-medium text-white ${rarity.bg}
                                           hover:opacity-90 transition-opacity`}
                             >
-                                Awesome! ({credits} keys left)
+                                {credits > 0 ? 'Close' : `Done (${credits} keys)`}
                             </button>
                         </div>
                     </div>

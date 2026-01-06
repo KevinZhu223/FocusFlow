@@ -339,6 +339,55 @@ export async function getCollection() {
 }
 
 // ============================================
+// Friend System API (Phase 5)
+// ============================================
+
+/**
+ * Get friends and pending requests
+ */
+export async function getFriends() {
+    const response = await fetch(`${API_BASE}/friends`, {
+        headers: getHeaders(),
+    });
+    return handleResponse(response);
+}
+
+/**
+ * Send a friend request by email
+ */
+export async function sendFriendRequest(email) {
+    const response = await fetch(`${API_BASE}/friends/request`, {
+        method: 'POST',
+        headers: getHeaders(),
+        body: JSON.stringify({ email }),
+    });
+    return handleResponse(response);
+}
+
+/**
+ * Accept a friend request
+ */
+export async function acceptFriendRequest(friendshipId) {
+    const response = await fetch(`${API_BASE}/friends/accept`, {
+        method: 'POST',
+        headers: getHeaders(),
+        body: JSON.stringify({ friendship_id: friendshipId }),
+    });
+    return handleResponse(response);
+}
+
+/**
+ * Remove a friend or decline a request
+ */
+export async function removeFriend(friendshipId) {
+    const response = await fetch(`${API_BASE}/friends/${friendshipId}`, {
+        method: 'DELETE',
+        headers: getHeaders(),
+    });
+    return handleResponse(response);
+}
+
+// ============================================
 // Utility API
 // ============================================
 
@@ -349,4 +398,3 @@ export async function checkHealth() {
     const response = await fetch(`${API_BASE}/health`);
     return response.json();
 }
-

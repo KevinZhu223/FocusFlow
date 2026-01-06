@@ -7,7 +7,8 @@
 import { useState, useEffect } from 'react';
 import {
     User, Settings, Download, Loader2, Check, Edit2,
-    Award, Calendar, Activity, TrendingUp, Package
+    Award, Calendar, Activity, TrendingUp, Package,
+    ToggleLeft, ToggleRight, Globe
 } from 'lucide-react';
 import * as LucideIcons from 'lucide-react';
 import { getProfile, updateProfile, exportData, getCollection } from '../api';
@@ -172,12 +173,14 @@ function VaultSection() {
                                       transition-all cursor-pointer group
                                       ${owned
                                     ? `${rarity.bg} ${rarity.border} hover:scale-105`
-                                    : 'bg-zinc-800/50 border-zinc-700/50 opacity-40'}`}
-                            title={owned ? `${item.name} (${item.rarity})` : '???'}
+                                    : 'bg-zinc-900 border-zinc-800'}`}
+                            title={owned ? `${item.name} (${item.rarity})` : 'Undiscovered item'}
                         >
-                            <span className={`text-3xl ${owned ? '' : 'grayscale blur-sm'}`}>
-                                {item.image_emoji}
-                            </span>
+                            {owned ? (
+                                <span className="text-3xl">{item.image_emoji}</span>
+                            ) : (
+                                <span className="text-2xl text-zinc-600">?</span>
+                            )}
 
                             {/* Count badge */}
                             {owned && item.count > 1 && (
@@ -195,13 +198,6 @@ function VaultSection() {
                                               whitespace-nowrap z-10">
                                     <div className={rarity.text}>{item.name}</div>
                                     <div className="text-zinc-500">{item.rarity}</div>
-                                </div>
-                            )}
-
-                            {/* Question mark for unowned */}
-                            {!owned && (
-                                <div className="absolute inset-0 flex items-center justify-center text-zinc-600 text-2xl">
-                                    ?
                                 </div>
                             )}
                         </div>
@@ -410,6 +406,35 @@ export default function ProfilePage() {
 
             {/* The Vault - Collection */}
             <VaultSection />
+
+            {/* Privacy Settings */}
+            <div className="bg-zinc-900/50 border border-zinc-800/50 rounded-xl p-5">
+                <div className="flex items-center justify-between">
+                    <div>
+                        <h3 className="text-lg font-medium text-zinc-100 flex items-center gap-2">
+                            <Globe className="w-5 h-5" />
+                            Public Profile
+                        </h3>
+                        <p className="text-sm text-zinc-500 mt-1">
+                            If disabled, you will not appear on the Global Leaderboard
+                        </p>
+                    </div>
+                    <button
+                        onClick={async () => {
+                            const newValue = !profile?.user?.is_public;
+                            await updateProfile({ is_public: newValue });
+                            fetchProfile();
+                        }}
+                        className={`p-1 rounded-lg transition-colors ${profile?.user?.is_public ? 'text-emerald-400' : 'text-zinc-500'}`}
+                    >
+                        {profile?.user?.is_public ? (
+                            <ToggleRight className="w-10 h-10" />
+                        ) : (
+                            <ToggleLeft className="w-10 h-10" />
+                        )}
+                    </button>
+                </div>
+            </div>
 
             {/* Data Export */}
             <div className="bg-zinc-900/50 border border-zinc-800/50 rounded-xl p-5">

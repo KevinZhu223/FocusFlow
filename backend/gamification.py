@@ -457,18 +457,16 @@ def seed_items(session: SQLSession):
     return len(ITEM_DEFINITIONS)
 
 
+# Explicit ordered rarity list to ensure weight alignment  
+RARITY_ORDER = ["Common", "Rare", "Legendary", "Mythic"]
+RARITY_WEIGHT_LIST = [60, 25, 10, 5]  # Must match RARITY_ORDER
+
+
 def get_random_rarity() -> str:
-    """Get a random rarity based on weights"""
-    total = sum(RARITY_WEIGHTS.values())
-    roll = random.randint(1, total)
-    
-    cumulative = 0
-    for rarity, weight in RARITY_WEIGHTS.items():
-        cumulative += weight
-        if roll <= cumulative:
-            return rarity
-    
-    return "Common"  # Fallback
+    """Get a random rarity based on weights using explicit ordering"""
+    # Use random.choices with aligned lists for guaranteed correctness
+    result = random.choices(RARITY_ORDER, weights=RARITY_WEIGHT_LIST, k=1)[0]
+    return result
 
 
 def open_chest(session: SQLSession, user) -> Dict[str, Any]:
