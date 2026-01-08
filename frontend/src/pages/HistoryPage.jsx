@@ -129,43 +129,49 @@ export default function HistoryPage() {
     const [modalScore, setModalScore] = useState(0);
 
     useEffect(() => {
-        fetchActivities();
+        fetchHeatmapData();
     }, []);
 
-    const fetchActivities = async () => {
+    const fetchHeatmapData = async () => {
         try {
-            const response = await getActivities();
-            const activities = response.activities || [];
+            // Import and use the heatmap API that returns all historical data
+            const { getHeatmapData } = await import('../api');
+            const response = await getHeatmapData();
+            const heatmapData = response.data || [];
 
-            // Group by date
+            // Convert heatmap data to our format
             const byDate = {};
-            activities.forEach(activity => {
-                // Parse UTC timestamp and get local date
-                const date = new Date(activity.timestamp + 'Z');
-                const dateKey = date.toLocaleDateString('en-CA'); // YYYY-MM-DD format
-
-                if (!byDate[dateKey]) {
-                    byDate[dateKey] = { activities: [], totalScore: 0 };
-                }
-                byDate[dateKey].activities.push(activity);
-                byDate[dateKey].totalScore += activity.productivity_score || 0;
+            heatmapData.forEach(day => {
+                byDate[day.date] = {
+                    activities: [], // Will be fetched on click
+                    totalScore: day.score,
+                    count: day.count
+                };
             });
 
             setActivityData(byDate);
         } catch (err) {
-            console.error('Failed to fetch activities:', err);
+            console.error('Failed to fetch heatmap data:', err);
         } finally {
             setIsLoading(false);
         }
     };
 
-    const handleDateClick = (date) => {
+    const handleDateClick = async (date) => {
         const dateKey = date.toLocaleDateString('en-CA');
         const dayData = activityData[dateKey];
 
         setSelectedDate(date);
-        setModalActivities(dayData?.activities || []);
         setModalScore(dayData?.totalScore || 0);
+
+        // Fetch activities for this specific date
+        try {
+            const response = await getActivities(dateKey);
+            setModalActivities(response.activities || []);
+        } catch (err) {
+            console.error('Failed to fetch day activities:', err);
+            setModalActivities([]);
+        }
     };
 
     const getTileClassName = ({ date, view }) => {
@@ -208,32 +214,29 @@ export default function HistoryPage() {
                 </div>
             </div>
 
-            {/* Legend - Compact */}
-            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-zinc-500">
+            {/* Legend - integrated as subtle bar */}
+            <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-xs text-zinc-500 px-1">
+                <span className="text-zinc-400 font-medium">Productivity:</span>
                 <div className="flex items-center gap-1.5">
-                    <div className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
-                    <span>High (50+)</span>
+                    <div className="w-3 h-3 rounded bg-gradient-to-br from-emerald-400/50 to-emerald-500/60" />
+                    <span>High</span>
                 </div>
                 <div className="flex items-center gap-1.5">
-                    <div className="w-2.5 h-2.5 rounded-full bg-yellow-500" />
-                    <span>Medium (20-49)</span>
+                    <div className="w-3 h-3 rounded bg-gradient-to-br from-yellow-400/50 to-yellow-500/60" />
+                    <span>Medium</span>
                 </div>
                 <div className="flex items-center gap-1.5">
-                    <div className="w-2.5 h-2.5 rounded-full bg-orange-500" />
-                    <span>Low (1-19)</span>
+                    <div className="w-3 h-3 rounded bg-gradient-to-br from-orange-400/50 to-orange-500/60" />
+                    <span>Low</span>
                 </div>
                 <div className="flex items-center gap-1.5">
-                    <div className="w-2.5 h-2.5 rounded-full bg-red-500" />
+                    <div className="w-3 h-3 rounded bg-gradient-to-br from-red-400/50 to-red-500/60" />
                     <span>Negative</span>
-                </div>
-                <div className="flex items-center gap-1.5">
-                    <div className="w-2.5 h-2.5 rounded-full bg-zinc-600" />
-                    <span>No data</span>
                 </div>
             </div>
 
             {/* Calendar */}
-            <div className="bg-zinc-900/50 border border-zinc-800/50 rounded-2xl p-6">
+            <div className="glass-card p-5">
                 <Calendar
                     onChange={handleDateClick}
                     value={viewDate}
@@ -268,7 +271,9 @@ export default function HistoryPage() {
                 }
                 
                 .focusflow-calendar .react-calendar__navigation {
-                    margin-bottom: 1rem;
+                    margin-bottom: 1.5rem;
+                    display: flex;
+                    align-items: center;
                 }
                 
                 .focusflow-calendar .react-calendar__navigation button {
@@ -277,23 +282,27 @@ export default function HistoryPage() {
                     font-weight: 600;
                     background: transparent;
                     border-radius: 0.75rem;
-                    padding: 0.75rem;
+                    padding: 0.5rem 1rem;
+                    min-width: 44px;
                 }
                 
-                .focusflow-calendar .react-calendar__navigation button:hover {
-                    background: rgba(255,255,255,0.1);
+                .focusflow-calendar .react-calendar__navigation button:hover:not(:disabled) {
+                    background: rgba(99, 102, 241, 0.2);
                 }
                 
                 .focusflow-calendar .react-calendar__navigation button:disabled {
                     background: transparent;
                     color: #52525b;
+                    cursor: not-allowed;
                 }
                 
                 .focusflow-calendar .react-calendar__month-view__weekdays {
                     color: #71717a;
-                    font-weight: 500;
+                    font-weight: 600;
                     text-transform: uppercase;
-                    font-size: 0.75rem;
+                    font-size: 0.7rem;
+                    letter-spacing: 0.05em;
+                    margin-bottom: 0.5rem;
                 }
                 
                 .focusflow-calendar .react-calendar__month-view__weekdays abbr {
@@ -303,78 +312,156 @@ export default function HistoryPage() {
                 .focusflow-calendar .react-calendar__month-view__days {
                     display: grid !important;
                     grid-template-columns: repeat(7, 1fr);
-                    gap: 4px;
+                    gap: 6px;
                 }
                 
                 .focusflow-calendar .react-calendar__tile {
-                    color: #a1a1aa;
-                    background: #18181b;
-                    border: 1px solid #27272a;
-                    padding: 1rem 0.5rem;
-                    border-radius: 0.75rem;
+                    color: #71717a;
+                    background: rgba(24, 24, 27, 0.6);
+                    border: 1px solid rgba(39, 39, 42, 0.5);
+                    padding: 0;
+                    border-radius: 0.5rem;
                     position: relative;
-                    aspect-ratio: 1;
+                    aspect-ratio: 1.2;
                     display: flex;
                     flex-direction: column;
                     align-items: center;
                     justify-content: center;
                     max-width: none !important;
                     flex-basis: auto !important;
+                    transition: all 0.15s ease;
+                    font-size: 0.875rem;
+                    font-weight: 500;
                 }
                 
-                .focusflow-calendar .react-calendar__tile:hover {
-                    background: rgba(99, 102, 241, 0.2);
+                .focusflow-calendar .react-calendar__tile:hover:not(:disabled) {
+                    background: rgba(99, 102, 241, 0.15);
+                    border-color: rgba(99, 102, 241, 0.4);
+                    transform: translateY(-2px);
+                    z-index: 5;
                 }
                 
-                /* Current day - just bold font, no purple background or border */
+                .focusflow-calendar .react-calendar__tile:disabled {
+                    color: #3f3f46;
+                    cursor: not-allowed;
+                }
+                
+                /* Neighboring month days */
+                .focusflow-calendar .react-calendar__month-view__days__day--neighboringMonth {
+                    color: #3f3f46;
+                    opacity: 0.5;
+                }
+                
+                /* Current day */
                 .focusflow-calendar .react-calendar__tile--now {
                     font-weight: 700;
+                    border-color: rgba(99, 102, 241, 0.5) !important;
+                    color: #a5b4fc !important;
                 }
                 
-                /* Selected/clicked day - remove all purple styling */
-                .focusflow-calendar .react-calendar__tile--active {
-                    /* No special styling - productivity colors should show */
-                }
-                
-                /* Productivity score colors - these should take priority */
+                /* Productivity score colors */
                 .focusflow-calendar .react-calendar__tile.score-green {
-                    background: rgba(16, 185, 129, 0.4) !important;
-                    color: #34d399;
+                    background: linear-gradient(135deg, rgba(16, 185, 129, 0.3), rgba(16, 185, 129, 0.5)) !important;
+                    border-color: rgba(16, 185, 129, 0.4) !important;
+                    color: #6ee7b7 !important;
+                }
+                
+                .focusflow-calendar .react-calendar__tile.score-green:hover {
+                    background: linear-gradient(135deg, rgba(16, 185, 129, 0.4), rgba(16, 185, 129, 0.6)) !important;
                 }
                 
                 .focusflow-calendar .react-calendar__tile.score-yellow {
-                    background: rgba(234, 179, 8, 0.4) !important;
-                    color: #facc15;
+                    background: linear-gradient(135deg, rgba(234, 179, 8, 0.25), rgba(234, 179, 8, 0.4)) !important;
+                    border-color: rgba(234, 179, 8, 0.4) !important;
+                    color: #fde047 !important;
+                }
+                
+                .focusflow-calendar .react-calendar__tile.score-yellow:hover {
+                    background: linear-gradient(135deg, rgba(234, 179, 8, 0.35), rgba(234, 179, 8, 0.5)) !important;
                 }
                 
                 .focusflow-calendar .react-calendar__tile.score-orange {
-                    background: rgba(249, 115, 22, 0.4) !important;
-                    color: #fb923c;
+                    background: linear-gradient(135deg, rgba(249, 115, 22, 0.25), rgba(249, 115, 22, 0.4)) !important;
+                    border-color: rgba(249, 115, 22, 0.4) !important;
+                    color: #fdba74 !important;
+                }
+                
+                .focusflow-calendar .react-calendar__tile.score-orange:hover {
+                    background: linear-gradient(135deg, rgba(249, 115, 22, 0.35), rgba(249, 115, 22, 0.5)) !important;
                 }
                 
                 .focusflow-calendar .react-calendar__tile.score-red {
-                    background: rgba(239, 68, 68, 0.4) !important;
-                    color: #f87171;
+                    background: linear-gradient(135deg, rgba(239, 68, 68, 0.25), rgba(239, 68, 68, 0.4)) !important;
+                    border-color: rgba(239, 68, 68, 0.4) !important;
+                    color: #fca5a5 !important;
                 }
                 
-                .activity-dot-container {
-                    position: absolute;
-                    bottom: 4px;
-                    left: 50%;
-                    transform: translateX(-50%);
+                .focusflow-calendar .react-calendar__tile.score-red:hover {
+                    background: linear-gradient(135deg, rgba(239, 68, 68, 0.35), rgba(239, 68, 68, 0.5)) !important;
                 }
                 
-                .activity-dot {
-                    width: 6px;
-                    height: 6px;
-                    border-radius: 50%;
+                .focusflow-calendar .react-calendar__tile.no-data {
+                    color: #52525b;
                 }
                 
-                .activity-dot.green { background: #10b981; }
-                .activity-dot.yellow { background: #eab308; }
-                .activity-dot.orange { background: #f97316; }
-                .activity-dot.red { background: #ef4444; }
-                .activity-dot.grey { background: #52525b; }
+                /* Year view - month picker styling */
+                .focusflow-calendar .react-calendar__year-view,
+                .focusflow-calendar .react-calendar__decade-view,
+                .focusflow-calendar .react-calendar__century-view {
+                    padding: 1rem 0;
+                }
+                
+                .focusflow-calendar .react-calendar__year-view__months,
+                .focusflow-calendar .react-calendar__decade-view__years,
+                .focusflow-calendar .react-calendar__century-view__decades {
+                    display: grid !important;
+                    grid-template-columns: repeat(4, 1fr);
+                    gap: 8px;
+                }
+                
+                .focusflow-calendar .react-calendar__year-view .react-calendar__tile,
+                .focusflow-calendar .react-calendar__decade-view .react-calendar__tile,
+                .focusflow-calendar .react-calendar__century-view .react-calendar__tile {
+                    background: rgba(39, 39, 42, 0.5);
+                    border: 1px solid rgba(63, 63, 70, 0.5);
+                    border-radius: 0.75rem;
+                    padding: 1rem;
+                    color: #a1a1aa;
+                    font-weight: 500;
+                    aspect-ratio: auto;
+                    transition: all 0.15s ease;
+                }
+                
+                .focusflow-calendar .react-calendar__year-view .react-calendar__tile:hover:not(:disabled),
+                .focusflow-calendar .react-calendar__decade-view .react-calendar__tile:hover:not(:disabled),
+                .focusflow-calendar .react-calendar__century-view .react-calendar__tile:hover:not(:disabled) {
+                    background: rgba(99, 102, 241, 0.2);
+                    border-color: rgba(99, 102, 241, 0.4);
+                    color: #e4e4e7;
+                    transform: translateY(-2px);
+                }
+                
+                .focusflow-calendar .react-calendar__year-view .react-calendar__tile--now,
+                .focusflow-calendar .react-calendar__decade-view .react-calendar__tile--now,
+                .focusflow-calendar .react-calendar__century-view .react-calendar__tile--now {
+                    background: rgba(99, 102, 241, 0.15);
+                    border-color: rgba(99, 102, 241, 0.4);
+                    color: #a5b4fc;
+                    font-weight: 600;
+                }
+                
+                /* Remove purple highlight from active tiles - let productivity colors show */
+                .focusflow-calendar .react-calendar__tile--active {
+                    box-shadow: none !important;
+                }
+                
+                .focusflow-calendar .react-calendar__year-view .react-calendar__tile--active,
+                .focusflow-calendar .react-calendar__decade-view .react-calendar__tile--active,
+                .focusflow-calendar .react-calendar__century-view .react-calendar__tile--active {
+                    background: rgba(99, 102, 241, 0.25) !important;
+                    border-color: rgba(99, 102, 241, 0.5) !important;
+                    color: #c7d2fe !important;
+                }
             `}</style>
         </div>
     );

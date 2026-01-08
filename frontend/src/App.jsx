@@ -16,6 +16,7 @@ import ActivityInput from './components/ActivityInput';
 import Timeline from './components/Timeline';
 import Dashboard from './components/Dashboard';
 import InterventionAlert from './components/InterventionAlert';
+import MorningCheckIn from './components/MorningCheckIn';
 import { logActivity, getActivities, getDashboard, deleteActivity, checkHealth } from './api';
 
 /**
@@ -39,7 +40,12 @@ function ProtectedRoute({ children }) {
     return <Navigate to="/login" replace />;
   }
 
-  return children;
+  return (
+    <>
+      <MorningCheckIn />
+      {children}
+    </>
+  );
 }
 
 /**

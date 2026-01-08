@@ -15,7 +15,7 @@ from dotenv import load_dotenv
 
 from models import (
     Base, User, ActivityLog, CategoryEnum, Goal, Badge, UserBadge,
-    TimeframeEnum, Item, UserItem, init_db
+    TimeframeEnum, GoalTypeEnum, Item, UserItem, init_db
 )
 from nlp_parser import parse_activity, generate_daily_insights
 from auth import auth_bp, init_auth_routes, require_auth, get_user_from_token
@@ -156,13 +156,23 @@ def log_activity():
             session, user, activity, all_activities, local_hour
         )
         
-        # Award chest credits for productive work (Phase 4.5)
+        # Award chest credits for CUMULATIVE productive work (Phase 4.5)
+        # 1 key per 2 hours of productive work, CUMULATIVE across activities
         credits_earned = 0
         if parsed['productivity_score'] > 0:
-            duration_hours = (parsed['duration_minutes'] or 30) / 60
-            credits_earned = int(duration_hours // 2)  # 1 credit per 2 hours
-            if credits_earned > 0:
+            duration_minutes = parsed['duration_minutes'] or 30
+            
+            # Add to cumulative productive minutes
+            user.productive_minutes = (user.productive_minutes or 0) + duration_minutes
+            
+            # Check if we crossed 120-minute threshold (2 hours)
+            keys_from_threshold = user.productive_minutes // 120  # Full keys earned
+            remaining_minutes = user.productive_minutes % 120  # Leftover minutes
+            
+            if keys_from_threshold > 0:
+                credits_earned = keys_from_threshold
                 user.chest_credits = (user.chest_credits or 0) + credits_earned
+                user.productive_minutes = remaining_minutes  # Keep remainder for next time
         
         session.commit()
         
@@ -171,7 +181,8 @@ def log_activity():
             "activity": activity.to_dict(),
             "gamification": gamification_result,
             "credits_earned": credits_earned,
-            "total_credits": user.chest_credits or 0
+            "total_credits": user.chest_credits or 0,
+            "productive_minutes_progress": user.productive_minutes or 0  # Minutes toward next key
         }), 201
         
     except Exception as e:
@@ -185,6 +196,7 @@ def log_activity():
 def get_activities():
     """Get activities for the current user."""
     date_str = request.args.get('date')
+    tz_offset = request.args.get('tz_offset', type=int, default=0)  # Minutes offset from UTC
     limit = min(int(request.args.get('limit', 50)), 100)
     
     session = Session()
@@ -203,12 +215,17 @@ def get_activities():
         else:
             target_date = datetime.utcnow().date()
         
-        start_of_day = datetime.combine(target_date, datetime.min.time())
-        end_of_day = start_of_day + timedelta(days=1)
+        # Calculate UTC range for the user's local day
+        # tz_offset is in minutes (e.g., 300 for EST = UTC-5, so we ADD 300 minutes to local to get UTC)
+        # JavaScript getTimezoneOffset() returns positive for behind UTC, negative for ahead
+        local_midnight = datetime.combine(target_date, datetime.min.time())
+        # Convert local midnight to UTC by adding the offset
+        start_of_day_utc = local_midnight + timedelta(minutes=tz_offset)
+        end_of_day_utc = start_of_day_utc + timedelta(days=1)
         
         query = query.filter(
-            ActivityLog.timestamp >= start_of_day,
-            ActivityLog.timestamp < end_of_day
+            ActivityLog.timestamp >= start_of_day_utc,
+            ActivityLog.timestamp < end_of_day_utc
         )
         
         activities = query.order_by(ActivityLog.timestamp.desc()).limit(limit).all()
@@ -260,6 +277,7 @@ def delete_activity(activity_id):
 def get_dashboard():
     """Get dashboard statistics including gamification info."""
     date_str = request.args.get('date')
+    tz_offset = request.args.get('tz_offset', type=int, default=0)  # Minutes offset from UTC
     
     session = Session()
     try:
@@ -273,13 +291,16 @@ def get_dashboard():
         else:
             target_date = datetime.utcnow().date()
         
-        start_of_day = datetime.combine(target_date, datetime.min.time())
-        end_of_day = start_of_day + timedelta(days=1)
+        # Calculate UTC range for the user's local day
+        # tz_offset is in minutes (e.g., 300 for EST = UTC-5, so we ADD 300 minutes to local to get UTC)
+        local_midnight = datetime.combine(target_date, datetime.min.time())
+        start_of_day_utc = local_midnight + timedelta(minutes=tz_offset)
+        end_of_day_utc = start_of_day_utc + timedelta(days=1)
         
         activities = session.query(ActivityLog).filter(
             ActivityLog.user_id == user.id,
-            ActivityLog.timestamp >= start_of_day,
-            ActivityLog.timestamp < end_of_day
+            ActivityLog.timestamp >= start_of_day_utc,
+            ActivityLog.timestamp < end_of_day_utc
         ).all()
         
         daily_score = sum(a.productivity_score for a in activities)
@@ -328,6 +349,7 @@ def get_dashboard():
 def get_daily_insights():
     """Get AI-generated daily coaching insights."""
     date_str = request.args.get('date')
+    tz_offset = request.args.get('tz_offset', type=int, default=0)  # Minutes offset from UTC
     
     session = Session()
     try:
@@ -341,13 +363,15 @@ def get_daily_insights():
         else:
             target_date = datetime.utcnow().date()
         
-        start_of_day = datetime.combine(target_date, datetime.min.time())
-        end_of_day = start_of_day + timedelta(days=1)
+        # Calculate UTC range for the user's local day
+        local_midnight = datetime.combine(target_date, datetime.min.time())
+        start_of_day_utc = local_midnight + timedelta(minutes=tz_offset)
+        end_of_day_utc = start_of_day_utc + timedelta(days=1)
         
         activities = session.query(ActivityLog).filter(
             ActivityLog.user_id == user.id,
-            ActivityLog.timestamp >= start_of_day,
-            ActivityLog.timestamp < end_of_day
+            ActivityLog.timestamp >= start_of_day_utc,
+            ActivityLog.timestamp < end_of_day_utc
         ).all()
         
         activities_data = [a.to_dict() for a in activities]
@@ -368,6 +392,8 @@ def get_daily_insights():
 @app.route('/api/activities/heatmap', methods=['GET'])
 def get_heatmap_data():
     """Get activity data for heatmap visualization."""
+    tz_offset = request.args.get('tz_offset', type=int, default=0)  # Minutes offset from UTC
+    
     session = Session()
     try:
         user = get_current_user(session)
@@ -384,9 +410,13 @@ def get_heatmap_data():
             ActivityLog.timestamp < end_datetime
         ).all()
         
+        # Group activities by LOCAL date (convert UTC timestamp to local)
         daily_data = {}
         for activity in activities:
-            date_key = activity.timestamp.date().isoformat()
+            # Convert UTC timestamp to local time by subtracting the offset
+            # tz_offset is positive for behind UTC (e.g., 300 for EST)
+            local_timestamp = activity.timestamp - timedelta(minutes=tz_offset)
+            date_key = local_timestamp.date().isoformat()
             if date_key not in daily_data:
                 daily_data[date_key] = {"count": 0, "score": 0}
             daily_data[date_key]["count"] += 1
@@ -422,71 +452,133 @@ def get_goals():
         
         goals = session.query(Goal).filter(Goal.user_id == user.id).all()
         
+        # Get timezone offset from frontend (in minutes, e.g., -300 for EST)
+        # Positive offset means behind UTC, negative means ahead
+        tz_offset = request.args.get('tz_offset', type=int, default=0)
+        
         goals_with_progress = []
         for goal in goals:
-            # Calculate progress based on timeframe
-            if goal.timeframe == TimeframeEnum.WEEKLY:
-                # Start of current week (Monday)
-                today = datetime.utcnow().date()
+            # Calculate user's local date using their timezone offset
+            # JavaScript offset is inverted: -300 for EST means UTC-5
+            now_utc = datetime.utcnow()
+            user_local_datetime = now_utc - timedelta(minutes=tz_offset)
+            today = user_local_datetime.date()
+            
+            if goal.timeframe == TimeframeEnum.DAILY:
+                # Start of current day (in user's local time)
+                start_date = today
+                total_days = 1
+                days_passed = 1
+            elif goal.timeframe == TimeframeEnum.WEEKLY:
+                # Start of current week (Monday) in user's local time
                 start_date = today - timedelta(days=today.weekday())
-            else:
-                # Start of current month
-                today = datetime.utcnow().date()
-                start_date = today.replace(day=1)
-            
-            start_datetime = datetime.combine(start_date, datetime.min.time())
-            
-            # Get activities for this category in the timeframe
-            activities = session.query(ActivityLog).filter(
-                ActivityLog.user_id == user.id,
-                ActivityLog.category == goal.category,
-                ActivityLog.timestamp >= start_datetime
-            ).all()
-            
-            # Calculate hours logged
-            total_minutes = sum(a.duration_minutes or 30 for a in activities)
-            hours_logged = round(total_minutes / 60, 1)
-            progress_percent = min(100, round((hours_logged / goal.target_value) * 100, 1))
-            
-            # Smart pacing: calculate expected progress based on day of week
-            today = datetime.utcnow()
-            if goal.timeframe == TimeframeEnum.WEEKLY:
-                # Days into the week (1 = Monday, 7 = Sunday)
-                days_passed = max(1, today.weekday() + 1)  # weekday() returns 0-6
                 total_days = 7
+                days_passed = max(1, today.weekday() + 1)
             else:  # Monthly
+                # Start of current month
+                start_date = today.replace(day=1)
                 days_passed = today.day
                 # Get total days in month
                 if today.month == 12:
                     total_days = 31
                 else:
-                    next_month = today.replace(day=28) + timedelta(days=4)
+                    next_month = user_local_datetime.replace(day=28) + timedelta(days=4)
                     total_days = (next_month - timedelta(days=next_month.day)).day
             
-            expected_hours = round((goal.target_value / total_days) * days_passed, 1)
-            expected_percent = min(100, round((expected_hours / goal.target_value) * 100, 1))
+            # Convert start_date back to UTC for database query
+            # The start_date is midnight in user's local time
+            start_datetime_local = datetime.combine(start_date, datetime.min.time())
+            # Add back the offset to get UTC time
+            start_datetime_utc = start_datetime_local + timedelta(minutes=tz_offset)
             
-            # Determine status based on pacing and day of week
-            if progress_percent >= 100:
-                pacing_status = "complete"
-            elif hours_logged >= expected_hours:
-                pacing_status = "on_track"
-            elif hours_logged >= expected_hours * 0.7:
-                pacing_status = "slightly_behind"
-            # Before Thursday (day 4), show "not_started" if < 10% progress
-            elif days_passed < 4 and progress_percent < 10:
-                pacing_status = "not_started"
-            # After Thursday and < 50%, show at_risk
-            elif days_passed >= 4 and progress_percent < 50:
-                pacing_status = "at_risk"
+            # Get activities for this goal in the timeframe
+            # Smart matching: If goal has a title, use fuzzy matching on activity names
+            # Otherwise fall back to category matching
+            if goal.title:
+                # Extract key terms from goal title for matching
+                # e.g., "Limit Social Media" -> match activities containing "social media"
+                title_lower = goal.title.lower()
+                # Remove common prefixes
+                for prefix in ['limit ', 'reduce ', 'avoid ', 'stop ', 'less ', 'target ', 'achieve ']:
+                    if title_lower.startswith(prefix):
+                        title_lower = title_lower[len(prefix):]
+                        break
+                
+                # Get all activities in category, then filter by name match
+                all_category_activities = session.query(ActivityLog).filter(
+                    ActivityLog.user_id == user.id,
+                    ActivityLog.category == goal.category,
+                    ActivityLog.timestamp >= start_datetime_utc
+                ).all()
+                
+                # Filter to only activities whose name contains the goal keywords
+                activities = [
+                    a for a in all_category_activities
+                    if title_lower in a.activity_name.lower() or 
+                       a.activity_name.lower() in title_lower or
+                       any(word in a.activity_name.lower() for word in title_lower.split() if len(word) > 3)
+                ]
             else:
-                pacing_status = "slightly_behind"
+                # No title - use traditional category matching
+                activities = session.query(ActivityLog).filter(
+                    ActivityLog.user_id == user.id,
+                    ActivityLog.category == goal.category,
+                    ActivityLog.timestamp >= start_datetime_utc
+                ).all()
+            
+            # Calculate hours logged
+            total_minutes = sum(a.duration_minutes or 30 for a in activities)
+            hours_logged = round(total_minutes / 60, 1)
+            
+            # Get goal type (default to target for existing goals)
+            goal_type = goal.goal_type.value if goal.goal_type else "target"
+            is_limit_goal = goal_type == "limit"
+            
+            # Calculate progress and status based on goal type
+            if is_limit_goal:
+                # LIMIT GOAL: progress shows how much of budget used
+                progress_percent = round((hours_logged / goal.target_value) * 100, 1)
+                budget_remaining = max(0, round(goal.target_value - hours_logged, 1))
+                
+                # Status for limit goals (staying under is good)
+                if hours_logged <= goal.target_value * 0.5:
+                    pacing_status = "on_track"  # Under 50% - doing great
+                elif hours_logged <= goal.target_value * 0.8:
+                    pacing_status = "slightly_behind"  # 50-80% - caution
+                elif hours_logged <= goal.target_value:
+                    pacing_status = "at_risk"  # 80-100% - warning
+                else:
+                    pacing_status = "over_limit"  # Over limit
+                    
+                expected_hours = None  # Not applicable for limit goals
+                expected_percent = None
+            else:
+                # TARGET GOAL: original logic
+                progress_percent = min(100, round((hours_logged / goal.target_value) * 100, 1))
+                expected_hours = round((goal.target_value / total_days) * days_passed, 1)
+                expected_percent = min(100, round((expected_hours / goal.target_value) * 100, 1))
+                budget_remaining = None
+                
+                # Status for target goals
+                if progress_percent >= 100:
+                    pacing_status = "complete"
+                elif hours_logged >= expected_hours:
+                    pacing_status = "on_track"
+                elif hours_logged >= expected_hours * 0.7:
+                    pacing_status = "slightly_behind"
+                elif days_passed < 4 and progress_percent < 10:
+                    pacing_status = "not_started"
+                elif days_passed >= 4 and progress_percent < 50:
+                    pacing_status = "at_risk"
+                else:
+                    pacing_status = "slightly_behind"
             
             goal_data = goal.to_dict()
             goal_data["hours_logged"] = hours_logged
             goal_data["progress_percent"] = progress_percent
             goal_data["expected_hours"] = expected_hours
             goal_data["expected_percent"] = expected_percent
+            goal_data["budget_remaining"] = budget_remaining
             goal_data["days_passed"] = days_passed
             goal_data["total_days"] = total_days
             goal_data["status"] = pacing_status
@@ -502,22 +594,18 @@ def get_goals():
 
 @app.route('/api/goals', methods=['POST'])
 def create_goal():
-    """Create a new goal with optional custom title."""
+    """Create a new goal with optional custom title and goal type."""
     data = request.get_json()
     
     if not data:
         return jsonify({"error": "Missing request body"}), 400
     
-    required = ['category', 'target_value', 'timeframe']
+    # Required: target_value, timeframe
+    # Optional: title, category (LLM will categorize if not provided), goal_type
+    required = ['target_value', 'timeframe']
     for field in required:
         if field not in data:
             return jsonify({"error": f"Missing required field: {field}"}), 400
-    
-    # Validate category
-    try:
-        category = CategoryEnum(data['category'])
-    except ValueError:
-        return jsonify({"error": f"Invalid category: {data['category']}"}), 400
     
     # Validate timeframe
     try:
@@ -525,20 +613,47 @@ def create_goal():
     except ValueError:
         return jsonify({"error": f"Invalid timeframe: {data['timeframe']}"}), 400
     
+    # Validate goal_type (default to target)
+    goal_type_str = data.get('goal_type', 'target')
+    try:
+        goal_type = GoalTypeEnum(goal_type_str)
+    except ValueError:
+        return jsonify({"error": f"Invalid goal_type: {goal_type_str}"}), 400
+    
     # Get optional title
     title = data.get('title', '').strip()[:255] if data.get('title') else None
+    
+    # Category is optional - use LLM to categorize if not provided
+    category = None
+    if data.get('category'):
+        try:
+            category = CategoryEnum(data['category'])
+        except ValueError:
+            pass  # Invalid category, will use LLM
+    
+    # If no category provided and title exists, use LLM to categorize
+    if not category and title:
+        try:
+            category = categorize_goal_with_llm(title, goal_type_str)
+        except Exception as e:
+            print(f"LLM categorization failed: {e}")
+            # Default to Career for target goals, Leisure for limit goals
+            category = CategoryEnum.LEISURE if goal_type == GoalTypeEnum.LIMIT else CategoryEnum.CAREER
+    elif not category:
+        # No title and no category - use defaults
+        category = CategoryEnum.LEISURE if goal_type == GoalTypeEnum.LIMIT else CategoryEnum.CAREER
     
     session = Session()
     try:
         user = get_current_user(session)
         
-        # Always create new goal (allowing multiple goals per category)
         goal = Goal(
             user_id=user.id,
             title=title,
             category=category,
             target_value=int(data['target_value']),
-            timeframe=timeframe
+            timeframe=timeframe,
+            goal_type=goal_type
         )
         session.add(goal)
         
@@ -554,6 +669,40 @@ def create_goal():
         return jsonify({"error": str(e)}), 500
     finally:
         session.close()
+
+
+def categorize_goal_with_llm(title: str, goal_type: str) -> CategoryEnum:
+    """Use LLM to categorize a goal based on its title."""
+    prompt = f"""Categorize this goal into exactly one category.
+
+Goal: "{title}"
+Goal Type: {goal_type} ({"achieve at least X hours" if goal_type == "target" else "stay under X hours"})
+
+Categories:
+- Career: Work, study, learning, professional development
+- Health: Exercise, gym, meditation, sleep, nutrition
+- Leisure: Gaming, entertainment, social media, TV, hobbies
+- Chores: Household tasks, errands, cleaning, maintenance
+- Social: Time with friends, family, community
+
+Reply with ONLY the category name (Career, Health, Leisure, Chores, or Social)."""
+
+    try:
+        model = genai.GenerativeModel('gemini-2.0-flash')
+        response = model.generate_content(prompt)
+        category_text = response.text.strip()
+        
+        # Try to match the response to a category
+        category_text = category_text.title()
+        for cat in CategoryEnum:
+            if cat.value in category_text or category_text in cat.value:
+                return cat
+        
+        # Default based on goal type
+        return CategoryEnum.LEISURE if goal_type == "limit" else CategoryEnum.CAREER
+    except Exception as e:
+        print(f"LLM categorization error: {e}")
+        return CategoryEnum.LEISURE if goal_type == "limit" else CategoryEnum.CAREER
 
 
 @app.route('/api/goals/<int:goal_id>', methods=['DELETE'])
@@ -592,10 +741,18 @@ def get_leaderboard():
     """Get top 10 public users by weekly score."""
     session = Session()
     try:
-        # Get start of current week
-        today = datetime.utcnow().date()
+        # Get timezone offset from frontend (in minutes, e.g., -300 for EST)
+        tz_offset = request.args.get('tz_offset', type=int, default=0)
+        
+        # Calculate user's local date and week start
+        now_utc = datetime.utcnow()
+        user_local_datetime = now_utc - timedelta(minutes=tz_offset)
+        today = user_local_datetime.date()
         start_of_week = today - timedelta(days=today.weekday())
-        start_datetime = datetime.combine(start_of_week, datetime.min.time())
+        
+        # Convert to UTC for database query
+        start_datetime_local = datetime.combine(start_of_week, datetime.min.time())
+        start_datetime_utc = start_datetime_local + timedelta(minutes=tz_offset)
         
         # Get all public users
         public_users = session.query(User).filter(User.is_public == True).all()
@@ -605,7 +762,7 @@ def get_leaderboard():
             # Calculate weekly score
             activities = session.query(ActivityLog).filter(
                 ActivityLog.user_id == user.id,
-                ActivityLog.timestamp >= start_datetime
+                ActivityLog.timestamp >= start_datetime_utc
             ).all()
             
             weekly_score = sum(a.productivity_score for a in activities)
@@ -707,6 +864,14 @@ def update_profile():
         
         if 'name' in data and data['name'].strip():
             user.name = data['name'].strip()[:255]
+        
+        if 'birth_year' in data:
+            if data['birth_year']:
+                year = int(data['birth_year'])
+                if 1920 <= year <= datetime.utcnow().year:
+                    user.birth_year = year
+            else:
+                user.birth_year = None
         
         session.commit()
         
@@ -943,18 +1108,219 @@ def get_user_collection():
         owned_ids = {ui.item_id for ui in user_items}
         owned_items = [ui.to_dict() for ui in user_items]
         
+        # Count broken items
+        broken_count = sum(1 for ui in user_items if ui.is_broken)
+        
         return jsonify({
             "owned_items": owned_items,
             "owned_count": len(owned_items),
+            "broken_count": broken_count,
             "total_items": len(all_items),
+            "chest_credits": user.chest_credits,
             "all_items": [
                 {
                     **item.to_dict(),
                     "owned": item.id in owned_ids,
-                    "count": next((ui.count for ui in user_items if ui.item_id == item.id), 0)
+                    "count": next((ui.count for ui in user_items if ui.item_id == item.id), 0),
+                    "is_broken": next((ui.is_broken for ui in user_items if ui.item_id == item.id), False)
                 }
                 for item in all_items
             ]
+        })
+        
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        session.close()
+
+
+@app.route('/api/items/repair/<int:item_id>', methods=['POST'])
+def repair_item_endpoint(item_id):
+    """Repair a broken item by spending chest credits."""
+    from gamification import repair_item
+    
+    session = Session()
+    try:
+        user = get_current_user(session)
+        result = repair_item(session, user, item_id)
+        
+        if result.get("success"):
+            return jsonify(result)
+        else:
+            return jsonify(result), 400
+            
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        session.close()
+
+
+@app.route('/api/projection', methods=['GET'])
+def get_time_projection():
+    """Calculate life projection based on leisure time habits."""
+    session = Session()
+    try:
+        user = get_current_user(session)
+        
+        # Get user's age
+        current_year = datetime.utcnow().year
+        if user.birth_year:
+            age = current_year - user.birth_year
+        else:
+            age = 25  # Default assumption if no birth year set
+        
+        # Calculate remaining years (assuming 80 year lifespan)
+        remaining_years = max(0, 80 - age)
+        
+        # Get last 7 days of leisure activity
+        seven_days_ago = datetime.utcnow() - timedelta(days=7)
+        
+        leisure_activities = session.query(ActivityLog).filter(
+            ActivityLog.user_id == user.id,
+            ActivityLog.timestamp >= seven_days_ago,
+            ActivityLog.category == CategoryEnum.LEISURE
+        ).all()
+        
+        # Calculate average daily leisure
+        total_leisure_minutes = sum(a.duration_minutes or 30 for a in leisure_activities)
+        avg_daily_leisure_minutes = total_leisure_minutes / 7
+        avg_daily_leisure_hours = avg_daily_leisure_minutes / 60
+        
+        # Calculate years wasted projection
+        # Formula: avg_daily_leisure * 365 * remaining_years / (24 * 365) = years on leisure
+        minutes_per_year = avg_daily_leisure_minutes * 365
+        hours_per_year = minutes_per_year / 60
+        years_on_leisure = (avg_daily_leisure_minutes * 365 * remaining_years) / (60 * 24 * 365)
+        
+        # Calculate what percentage of remaining life
+        percent_of_life = (avg_daily_leisure_hours / 24) * 100
+        
+        # Check today's leisure for intervention trigger
+        today = datetime.utcnow().date()
+        start_of_today = datetime.combine(today, datetime.min.time())
+        
+        todays_leisure = session.query(ActivityLog).filter(
+            ActivityLog.user_id == user.id,
+            ActivityLog.timestamp >= start_of_today,
+            ActivityLog.category == CategoryEnum.LEISURE
+        ).all()
+        
+        today_leisure_minutes = sum(a.duration_minutes or 30 for a in todays_leisure)
+        today_leisure_hours = today_leisure_minutes / 60
+        
+        # Limit exceeded if > 1 hour leisure today (configurable per user later)
+        leisure_limit_hours = 1.0
+        limit_exceeded = today_leisure_hours > leisure_limit_hours
+        
+        return jsonify({
+            "age": age,
+            "has_birth_year": user.birth_year is not None,
+            "remaining_years": remaining_years,
+            "avg_daily_leisure_hours": round(avg_daily_leisure_hours, 1),
+            "hours_per_year": round(hours_per_year, 0),
+            "years_on_leisure": round(years_on_leisure, 1),
+            "percent_of_life": round(percent_of_life, 1),
+            "today_leisure_hours": round(today_leisure_hours, 1),
+            "leisure_limit_hours": leisure_limit_hours,
+            "limit_exceeded": limit_exceeded,
+            "warning_level": "critical" if years_on_leisure >= 5 else "warning" if years_on_leisure >= 2 else "info"
+        })
+        
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        session.close()
+
+
+@app.route('/api/morning-checkin', methods=['GET'])
+def get_morning_checkin():
+    """Get yesterday's summary for morning check-in."""
+    session = Session()
+    try:
+        user = get_current_user(session)
+        
+        # Get yesterday's date range
+        today = datetime.utcnow().date()
+        yesterday = today - timedelta(days=1)
+        yesterday_start = datetime.combine(yesterday, datetime.min.time())
+        yesterday_end = datetime.combine(today, datetime.min.time())
+        
+        # Get yesterday's activities
+        activities = session.query(ActivityLog).filter(
+            ActivityLog.user_id == user.id,
+            ActivityLog.timestamp >= yesterday_start,
+            ActivityLog.timestamp < yesterday_end
+        ).all()
+        
+        # Calculate stats
+        total_score = sum(a.productivity_score for a in activities)
+        total_minutes = sum(a.duration_minutes or 30 for a in activities)
+        
+        # Category breakdown
+        category_stats = {}
+        for a in activities:
+            cat = a.category.value if a.category else "Other"
+            if cat not in category_stats:
+                category_stats[cat] = {"minutes": 0, "count": 0, "score": 0}
+            category_stats[cat]["minutes"] += a.duration_minutes or 30
+            category_stats[cat]["count"] += 1
+            category_stats[cat]["score"] += a.productivity_score
+        
+        # Find best and worst categories
+        best_category = None
+        worst_category = None
+        if category_stats:
+            sorted_cats = sorted(category_stats.items(), key=lambda x: x[1]["score"], reverse=True)
+            best_category = sorted_cats[0][0] if sorted_cats else None
+            # Worst is the one with most time but lowest score
+            for cat, stats in sorted_cats:
+                if cat == "Leisure" and stats["minutes"] > 30:
+                    worst_category = cat
+                    break
+        
+        # Generate insight message
+        if not activities:
+            insight = "No activities logged yesterday. Today is a fresh start!"
+            mood = "neutral"
+        elif total_score >= 100:
+            insight = f"Great day yesterday! You scored {round(total_score)} points. Keep that momentum today!"
+            mood = "positive"
+        elif total_score >= 50:
+            insight = f"Solid effort yesterday with {round(total_score)} points. Let's push a bit harder today!"
+            mood = "neutral"
+        elif total_score >= 0:
+            insight = f"Yesterday was {round(total_score)} points. Small steps count - let's make today better!"
+            mood = "cautious"
+        else:
+            leisure_time = category_stats.get("Leisure", {}).get("minutes", 0)
+            insight = f"Yesterday's score was {round(total_score)}. "
+            if leisure_time > 60:
+                insight += f"You spent {round(leisure_time/60, 1)}h on leisure. Try setting a limit today."
+            else:
+                insight += "Focus on productive activities today to turn things around."
+            mood = "warning"
+        
+        # Improvement suggestion
+        suggestion = None
+        if category_stats.get("Leisure", {}).get("minutes", 0) > 120:
+            suggestion = "Try limiting leisure activities to under 2 hours today"
+        elif category_stats.get("Career", {}).get("minutes", 0) < 60:
+            suggestion = "Aim for at least 1 hour of career-focused work today"
+        elif category_stats.get("Health", {}).get("minutes", 0) == 0:
+            suggestion = "Consider adding a health activity like exercise or meditation"
+        
+        return jsonify({
+            "yesterday_date": yesterday.isoformat(),
+            "activity_count": len(activities),
+            "total_hours": round(total_minutes / 60, 1),
+            "total_score": round(total_score, 1),
+            "category_breakdown": category_stats,
+            "best_category": best_category,
+            "worst_category": worst_category,
+            "insight": insight,
+            "mood": mood,
+            "suggestion": suggestion,
+            "has_data": len(activities) > 0
         })
         
     except Exception as e:
@@ -1026,30 +1392,46 @@ def get_friends():
 
 @app.route('/api/friends/request', methods=['POST'])
 def send_friend_request():
-    """Send a friend request by email."""
+    """Send a friend request by email or username."""
     from models import Friendship, FriendshipStatusEnum
     
     data = request.get_json()
-    email = data.get('email', '').strip().lower() if data else None
+    identifier = data.get('identifier', '').strip() if data else None
+    # Also support legacy 'email' field for backwards compatibility
+    if not identifier:
+        identifier = data.get('email', '').strip() if data else None
     
-    if not email:
-        return jsonify({"error": "Email is required"}), 400
+    if not identifier:
+        return jsonify({"error": "Email or username is required"}), 400
     
     session = Session()
     try:
         user = get_current_user(session)
         
-        # Can't friend yourself
-        if user.email.lower() == email:
-            return jsonify({"error": "Cannot send friend request to yourself"}), 400
+        # Determine if it's an email (contains @) or username
+        is_email = '@' in identifier
         
-        # Find target user
-        target_user = session.query(User).filter(
-            User.email.ilike(email)
-        ).first()
+        if is_email:
+            # Can't friend yourself
+            if user.email.lower() == identifier.lower():
+                return jsonify({"error": "Cannot send friend request to yourself"}), 400
+            
+            # Find target user by email
+            target_user = session.query(User).filter(
+                User.email.ilike(identifier)
+            ).first()
+        else:
+            # Can't friend yourself
+            if user.name.lower() == identifier.lower():
+                return jsonify({"error": "Cannot send friend request to yourself"}), 400
+            
+            # Find target user by username (case-insensitive)
+            target_user = session.query(User).filter(
+                User.name.ilike(identifier)
+            ).first()
         
         if not target_user:
-            return jsonify({"error": "User not found"}), 404
+            return jsonify({"error": f"User not found with {'email' if is_email else 'username'}: {identifier}"}), 404
         
         # Check for existing friendship or request
         existing = session.query(Friendship).filter(

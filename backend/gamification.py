@@ -384,9 +384,133 @@ def process_activity_gamification(
     # Check for new badges (pass local_hour for timezone-aware checks)
     new_badges = check_and_award_badges(session, user, activity, user_activities, local_hour)
     
+    # Check goal status for penalties/bonuses
+    goal_result = check_goal_status(session, user, activity)
+    
     return {
         **xp_result,
-        "new_badges": new_badges
+        "new_badges": new_badges,
+        "goal_penalties": goal_result.get("penalties", []),
+        "goal_bonuses": goal_result.get("bonuses", [])
+    }
+
+
+def check_goal_status(session: SQLSession, user, activity) -> Dict[str, Any]:
+    """
+    Check if activity pushes user over goal limits or helps complete goals.
+    Apply point penalties for exceeding limits, bonuses for meeting goals.
+    
+    Returns:
+        Dict with lists of penalties and bonuses applied
+    """
+    from models import Goal, ActivityLog, GoalTypeEnum, TimeframeEnum
+    
+    penalties = []
+    bonuses = []
+    
+    # Get user's active goals
+    goals = session.query(Goal).filter(Goal.user_id == user.id).all()
+    
+    today = datetime.utcnow().date()
+    start_of_day = datetime.combine(today, datetime.min.time())
+    
+    for goal in goals:
+        # Determine timeframe start
+        if goal.timeframe == TimeframeEnum.DAILY:
+            start_date = today
+        elif goal.timeframe == TimeframeEnum.WEEKLY:
+            start_date = today - timedelta(days=today.weekday())
+        else:  # Monthly
+            start_date = today.replace(day=1)
+        
+        start_datetime = datetime.combine(start_date, datetime.min.time())
+        
+        # Get activities matching this goal
+        if goal.title:
+            # Smart matching by title
+            title_lower = goal.title.lower()
+            for prefix in ['limit ', 'reduce ', 'avoid ', 'stop ', 'less ', 'target ', 'achieve ']:
+                if title_lower.startswith(prefix):
+                    title_lower = title_lower[len(prefix):]
+                    break
+            
+            all_category_activities = session.query(ActivityLog).filter(
+                ActivityLog.user_id == user.id,
+                ActivityLog.category == goal.category,
+                ActivityLog.timestamp >= start_datetime
+            ).all()
+            
+            activities = [
+                a for a in all_category_activities
+                if title_lower in a.activity_name.lower() or 
+                   a.activity_name.lower() in title_lower or
+                   any(word in a.activity_name.lower() for word in title_lower.split() if len(word) > 3)
+            ]
+        else:
+            activities = session.query(ActivityLog).filter(
+                ActivityLog.user_id == user.id,
+                ActivityLog.category == goal.category,
+                ActivityLog.timestamp >= start_datetime
+            ).all()
+        
+        total_minutes = sum(a.duration_minutes or 30 for a in activities)
+        hours_logged = total_minutes / 60
+        
+        is_limit_goal = goal.goal_type == GoalTypeEnum.LIMIT if goal.goal_type else False
+        
+        if is_limit_goal:
+            # LIMIT GOAL: Penalize for going over
+            if hours_logged > goal.target_value:
+                hours_over = hours_logged - goal.target_value
+                
+                # Check if this is the first time exceeding (penalty for initial breach)
+                # by checking if previous total (before this activity) was under limit
+                prev_minutes = total_minutes - (activity.duration_minutes or 30)
+                prev_hours = prev_minutes / 60
+                
+                if prev_hours <= goal.target_value:
+                    # First breach: -50 points
+                    penalty = -50
+                    user.xp = max(0, user.xp + penalty)
+                    penalties.append({
+                        "goal_title": goal.title or f"Limit {goal.category.value}",
+                        "points": penalty,
+                        "reason": "Exceeded limit",
+                        "hours_over": round(hours_over, 1)
+                    })
+                else:
+                    # Continued over-limit: -10 points per 30 min over
+                    new_penalty = -10
+                    user.xp = max(0, user.xp + new_penalty)
+                    penalties.append({
+                        "goal_title": goal.title or f"Limit {goal.category.value}",
+                        "points": new_penalty,
+                        "reason": "Continued over limit",
+                        "hours_over": round(hours_over, 1)
+                    })
+        else:
+            # TARGET GOAL: Bonus for completion
+            if hours_logged >= goal.target_value:
+                # Check if this activity completed the goal
+                prev_minutes = total_minutes - (activity.duration_minutes or 30)
+                prev_hours = prev_minutes / 60
+                
+                if prev_hours < goal.target_value:
+                    # Just completed: +25 points
+                    bonus = 25
+                    user.xp += bonus
+                    bonuses.append({
+                        "goal_title": goal.title or f"{goal.category.value} Goal",
+                        "points": bonus,
+                        "reason": "Goal completed!"
+                    })
+    
+    if penalties or bonuses:
+        session.commit()
+    
+    return {
+        "penalties": penalties,
+        "bonuses": bonuses
     }
 
 
@@ -396,35 +520,36 @@ def process_activity_gamification(
 
 import random
 
-# Item definitions - 20 items across 4 rarities
+# Item definitions - 20 items across 4 rarities (Tech Relic Theme)
+# icon_name should match Lucide React component names
 ITEM_DEFINITIONS = [
-    # COMMON (8 items)
-    {"name": "Rusty Floppy Disk", "rarity": "Common", "emoji": "💾", "description": "A relic from the before-times. Still holds 1.44MB of nostalgia."},
-    {"name": "Coffee Stain", "rarity": "Common", "emoji": "☕", "description": "The badge of every productive morning."},
-    {"name": "Tangled Earbuds", "rarity": "Common", "emoji": "🎧", "description": "How did they even get like this?"},
-    {"name": "Sticky Note Stack", "rarity": "Common", "emoji": "📝", "description": "For ideas too important to forget, too small to email."},
-    {"name": "Dead Pen Collection", "rarity": "Common", "emoji": "🖊️", "description": "They worked when you borrowed them..."},
-    {"name": "Cable Spaghetti", "rarity": "Common", "emoji": "🔌", "description": "Nobody knows what half of these connect to."},
-    {"name": "Mystery USB Drive", "rarity": "Common", "emoji": "📀", "description": "Could be vacation photos. Could be a virus. Who knows?"},
-    {"name": "Crumpled To-Do List", "rarity": "Common", "emoji": "📋", "description": "Half-checked, fully ignored."},
+    # COMMON (8 items) - Basic Developer Tools
+    {"name": "Code Snippet", "rarity": "Common", "icon_name": "FileCode", "description": "A reusable piece of wisdom. Copy-paste with pride."},
+    {"name": "Coffee Cup", "rarity": "Common", "icon_name": "Coffee", "description": "The fuel that powers all great code."},
+    {"name": "Bug Fix", "rarity": "Common", "icon_name": "Bug", "description": "A squashed bug. Frame it and celebrate."},
+    {"name": "Terminal Line", "rarity": "Common", "icon_name": "Terminal", "description": "Command the machine. Feel the power."},
+    {"name": "Git Commit", "rarity": "Common", "icon_name": "GitCommit", "description": "Proof that you actually did something today."},
+    {"name": "Keyboard Key", "rarity": "Common", "icon_name": "Keyboard", "description": "A single key from a well-worn keyboard."},
+    {"name": "Binary Fragment", "rarity": "Common", "icon_name": "Binary", "description": "01101000 01101001. It means something."},
+    {"name": "Power Cable", "rarity": "Common", "icon_name": "Cable", "description": "Keep the electrons flowing."},
     
-    # RARE (6 items)
-    {"name": "Ergonomic Keyboard", "rarity": "Rare", "emoji": "⌨️", "description": "Your wrists thank you."},
-    {"name": "Noise-Canceling Focus", "rarity": "Rare", "emoji": "🔇", "description": "The power to ignore everything."},
-    {"name": "Second Monitor", "rarity": "Rare", "emoji": "🖥️", "description": "Because one screen is never enough."},
-    {"name": "Standing Desk Pass", "rarity": "Rare", "emoji": "🏃", "description": "Sit, stand, repeat. Feel productive either way."},
-    {"name": "Premium Coffee Beans", "rarity": "Rare", "emoji": "☕", "description": "Single-origin, fair-trade, productivity-enhancing."},
-    {"name": "Mechanical Keyboard", "rarity": "Rare", "emoji": "🎹", "description": "CLACK CLACK CLACK. So satisfying."},
+    # RARE (6 items) - Hardware Upgrades
+    {"name": "RAM Stick", "rarity": "Rare", "icon_name": "MemoryStick", "description": "16GB of pure possibility. Chrome approves."},
+    {"name": "Hard Drive", "rarity": "Rare", "icon_name": "HardDrive", "description": "1TB of untapped potential."},
+    {"name": "Database Shard", "rarity": "Rare", "icon_name": "Database", "description": "A fragment of infinite knowledge."},
+    {"name": "Wifi Signal", "rarity": "Rare", "icon_name": "Wifi", "description": "Full bars. Maximum productivity."},
+    {"name": "Shield Protocol", "rarity": "Rare", "icon_name": "Shield", "description": "Protection from digital threats."},
+    {"name": "Circuit Board", "rarity": "Rare", "icon_name": "CircuitBoard", "description": "The foundation of all technology."},
     
-    # LEGENDARY (4 items)  
-    {"name": "Flow State Crystal", "rarity": "Legendary", "emoji": "💎", "description": "Channel the power of uninterrupted focus."},
-    {"name": "Time Turner", "rarity": "Legendary", "emoji": "⏰", "description": "For when you need just a few more hours."},
-    {"name": "Imposter Syndrome Shield", "rarity": "Legendary", "emoji": "🛡️", "description": "You ARE qualified. This proves it."},
-    {"name": "The Perfect Chair", "rarity": "Legendary", "emoji": "🪑", "description": "Lumbar support of legends."},
+    # LEGENDARY (4 items) - Advanced Tech
+    {"name": "GPU Core", "rarity": "Legendary", "icon_name": "Cpu", "description": "Raw computational power. Games fear it."},
+    {"name": "Cloud Server", "rarity": "Legendary", "icon_name": "Cloud", "description": "Infinite scale. Zero maintenance."},
+    {"name": "Blockchain Node", "rarity": "Legendary", "icon_name": "Boxes", "description": "Decentralized. Immutable. Mysterious."},
+    {"name": "AI Model", "rarity": "Legendary", "icon_name": "Bot", "description": "Trained on millions of productive hours."},
     
-    # MYTHIC (2 items)
-    {"name": "The Golden Keyboard", "rarity": "Mythic", "emoji": "🏆", "description": "Typed upon by productivity gods."},
-    {"name": "Eternal Battery", "rarity": "Mythic", "emoji": "🔋", "description": "Never dies. Never stops. Never quits."},
+    # MYTHIC (2 items) - Transcendent Tech
+    {"name": "Quantum Core", "rarity": "Mythic", "icon_name": "Atom", "description": "Exists in all states until observed. Including 'done'."},
+    {"name": "The Singularity", "rarity": "Mythic", "icon_name": "Sparkles", "description": "The moment when productivity becomes infinite."},
 ]
 
 # Rarity weights for loot drops (CS:GO style)
@@ -448,7 +573,7 @@ def seed_items(session: SQLSession):
         item = Item(
             name=item_def["name"],
             rarity=RarityEnum[item_def["rarity"].upper()],
-            image_emoji=item_def["emoji"],
+            icon_name=item_def["icon_name"],
             description=item_def["description"]
         )
         session.add(item)
@@ -573,3 +698,103 @@ def check_chest_eligibility(session: SQLSession, user) -> Dict[str, Any]:
         "remaining_hours": max(0, round(2.0 - productive_hours, 1))
     }
 
+
+# ============================================================================
+# ITEM DECAY SYSTEM (Loss Aversion)
+# ============================================================================
+
+def check_item_decay(session: SQLSession, user) -> Optional[Dict[str, Any]]:
+    """
+    Check if user has exceeded their gaming limit and break their rarest item.
+    This creates loss aversion by punishing excessive leisure time.
+    
+    Args:
+        session: Database session
+        user: User model instance
+        
+    Returns:
+        Dict with broken item info if decay occurred, None otherwise
+    """
+    from models import UserItem, Item, RarityEnum
+    
+    # Check if user has exceeded their gaming limit
+    if user.today_gaming_minutes <= user.daily_gaming_allowance:
+        return None
+    
+    # Rarity priority: Mythic > Legendary > Rare > Common
+    rarity_priority = [RarityEnum.MYTHIC, RarityEnum.LEGENDARY, RarityEnum.RARE, RarityEnum.COMMON]
+    
+    # Find the rarest unbroken item
+    for rarity in rarity_priority:
+        user_item = session.query(UserItem).join(Item).filter(
+            UserItem.user_id == user.id,
+            UserItem.is_broken == False,
+            Item.rarity == rarity
+        ).first()
+        
+        if user_item:
+            # Break this item
+            user_item.is_broken = True
+            session.commit()
+            
+            return {
+                "broken": True,
+                "item_id": user_item.id,
+                "item_name": user_item.item.name,
+                "item_emoji": user_item.item.image_emoji,
+                "rarity": user_item.item.rarity.value,
+                "message": f"⚠️ Limit Exceeded: Your {user_item.item.name} has broken!"
+            }
+    
+    # No items to break
+    return None
+
+
+def repair_item(session: SQLSession, user, user_item_id: int) -> Dict[str, Any]:
+    """
+    Repair a broken item by spending chest credits.
+    
+    Args:
+        session: Database session
+        user: User model instance
+        user_item_id: ID of the UserItem to repair
+        
+    Returns:
+        Dict with repair result
+    """
+    from models import UserItem
+    
+    REPAIR_COST = 5  # Credits required to repair
+    
+    # Find the user's item
+    user_item = session.query(UserItem).filter(
+        UserItem.id == user_item_id,
+        UserItem.user_id == user.id
+    ).first()
+    
+    if not user_item:
+        return {"error": "Item not found", "success": False}
+    
+    if not user_item.is_broken:
+        return {"error": "Item is not broken", "success": False}
+    
+    if user.chest_credits < REPAIR_COST:
+        return {
+            "error": f"Not enough credits. Need {REPAIR_COST}, have {user.chest_credits}",
+            "success": False,
+            "cost": REPAIR_COST,
+            "current_credits": user.chest_credits
+        }
+    
+    # Spend credits and repair item
+    user.chest_credits -= REPAIR_COST
+    user_item.is_broken = False
+    session.commit()
+    
+    return {
+        "success": True,
+        "item_name": user_item.item.name,
+        "credits_spent": REPAIR_COST,
+        "remaining_credits": user.chest_credits,
+        "message": f"✨ {user_item.item.name} has been repaired!"
+    }

@@ -115,11 +115,34 @@ export async function logActivity(text) {
 }
 
 /**
+ * Get the user's local date in YYYY-MM-DD format
+ */
+function getLocalDateString() {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const day = String(now.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+}
+
+/**
+ * Get the user's timezone offset in minutes (e.g., -300 for EST)
+ */
+function getTimezoneOffset() {
+    return new Date().getTimezoneOffset();
+}
+
+/**
  * Get activities for a specific date
+ * Defaults to user's local date if no date provided
+ * Passes timezone offset so backend can calculate correct UTC range
  */
 export async function getActivities(date = null) {
     const params = new URLSearchParams();
-    if (date) params.append('date', date);
+    // Default to user's local date to handle timezone correctly
+    const targetDate = date || getLocalDateString();
+    params.append('date', targetDate);
+    params.append('tz_offset', getTimezoneOffset());
 
     const response = await fetch(`${API_BASE}/activities?${params}`, {
         headers: getHeaders(),
@@ -129,10 +152,15 @@ export async function getActivities(date = null) {
 
 /**
  * Get dashboard statistics
+ * Defaults to user's local date if no date provided
+ * Passes timezone offset so backend can calculate correct UTC range
  */
 export async function getDashboard(date = null) {
     const params = new URLSearchParams();
-    if (date) params.append('date', date);
+    // Default to user's local date to handle timezone correctly
+    const targetDate = date || getLocalDateString();
+    params.append('date', targetDate);
+    params.append('tz_offset', getTimezoneOffset());
 
     const response = await fetch(`${API_BASE}/dashboard?${params}`, {
         headers: getHeaders(),
@@ -157,10 +185,14 @@ export async function deleteActivity(activityId) {
 
 /**
  * Get daily AI-powered insights
+ * Passes local date and timezone offset for correct day filtering
  */
 export async function getDailyInsights(date = null) {
     const params = new URLSearchParams();
-    if (date) params.append('date', date);
+    // Default to user's local date
+    const targetDate = date || getLocalDateString();
+    params.append('date', targetDate);
+    params.append('tz_offset', getTimezoneOffset());
 
     const response = await fetch(`${API_BASE}/insights/daily?${params}`, {
         headers: getHeaders(),
@@ -170,9 +202,13 @@ export async function getDailyInsights(date = null) {
 
 /**
  * Get heatmap data for the last 365 days
+ * Passes timezone offset so activities are grouped by local date
  */
 export async function getHeatmapData() {
-    const response = await fetch(`${API_BASE}/activities/heatmap`, {
+    const params = new URLSearchParams();
+    params.append('tz_offset', getTimezoneOffset());
+
+    const response = await fetch(`${API_BASE}/activities/heatmap?${params}`, {
         headers: getHeaders(),
     });
     return handleResponse(response);
@@ -184,26 +220,28 @@ export async function getHeatmapData() {
 
 /**
  * Get all goals with progress
+ * Passes timezone offset so daily/weekly goals use user's local date
  */
 export async function getGoals() {
-    const response = await fetch(`${API_BASE}/goals`, {
+    const tzOffset = getTimezoneOffset();
+    const response = await fetch(`${API_BASE}/goals?tz_offset=${tzOffset}`, {
         headers: getHeaders(),
     });
     return handleResponse(response);
 }
 
 /**
- * Create or update a goal
+ * Create a new goal (category is auto-determined by LLM)
  */
-export async function createGoal(category, targetValue, timeframe, title = null) {
+export async function createGoal(targetValue, timeframe, title = null, goalType = 'target') {
     const response = await fetch(`${API_BASE}/goals`, {
         method: 'POST',
         headers: getHeaders(),
         body: JSON.stringify({
-            category,
             target_value: targetValue,
             timeframe,
-            title
+            title,
+            goal_type: goalType
         }),
     });
     return handleResponse(response);
@@ -226,9 +264,11 @@ export async function deleteGoal(goalId) {
 
 /**
  * Get weekly leaderboard
+ * Passes timezone offset so week boundaries use user's local date
  */
 export async function getLeaderboard() {
-    const response = await fetch(`${API_BASE}/leaderboard`, {
+    const tzOffset = getTimezoneOffset();
+    const response = await fetch(`${API_BASE}/leaderboard?tz_offset=${tzOffset}`, {
         headers: getHeaders(),
     });
     return handleResponse(response);
@@ -338,6 +378,38 @@ export async function getCollection() {
     return handleResponse(response);
 }
 
+/**
+ * Repair a broken item by spending chest credits
+ */
+export async function repairItem(userItemId) {
+    const response = await fetch(`${API_BASE}/items/repair/${userItemId}`, {
+        method: 'POST',
+        headers: getHeaders(),
+    });
+    return handleResponse(response);
+}
+
+/**
+ * Get time projection analytics (years wasted on leisure)
+ */
+export async function getProjection() {
+    const response = await fetch(`${API_BASE}/projection`, {
+        headers: getHeaders(),
+    });
+    return handleResponse(response);
+}
+
+/**
+ * Get morning check-in data (yesterday's summary)
+ */
+export async function getMorningCheckin() {
+    const response = await fetch(`${API_BASE}/morning-checkin`, {
+        headers: getHeaders(),
+    });
+    return handleResponse(response);
+}
+
+
 // ============================================
 // Friend System API (Phase 5)
 // ============================================
@@ -353,13 +425,13 @@ export async function getFriends() {
 }
 
 /**
- * Send a friend request by email
+ * Send a friend request by email or username
  */
-export async function sendFriendRequest(email) {
+export async function sendFriendRequest(identifier) {
     const response = await fetch(`${API_BASE}/friends/request`, {
         method: 'POST',
         headers: getHeaders(),
-        body: JSON.stringify({ email }),
+        body: JSON.stringify({ identifier }),
     });
     return handleResponse(response);
 }

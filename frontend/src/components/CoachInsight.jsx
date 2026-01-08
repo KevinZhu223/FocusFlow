@@ -4,7 +4,7 @@
  */
 
 import { useState, useEffect } from 'react';
-import { Sparkles, RefreshCw, AlertCircle } from 'lucide-react';
+import { Sparkles, RefreshCw, AlertCircle, ChevronDown, ChevronUp } from 'lucide-react';
 import { getDailyInsights } from '../api';
 
 export default function CoachInsight() {
@@ -12,6 +12,7 @@ export default function CoachInsight() {
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState(null);
     const [activityCount, setActivityCount] = useState(0);
+    const [isExpanded, setIsExpanded] = useState(false);
 
     const fetchInsight = async () => {
         setIsLoading(true);
@@ -32,17 +33,22 @@ export default function CoachInsight() {
         fetchInsight();
     }, []);
 
+    // Truncate insight to ~100 chars if not expanded
+    const displayInsight = !isExpanded && insight.length > 120
+        ? insight.substring(0, 120).trim() + '...'
+        : insight;
+    const canExpand = insight.length > 120;
+
     if (isLoading) {
         return (
-            <div className="bg-gradient-to-br from-indigo-500/10 to-purple-500/10 border border-indigo-500/20 
-                    rounded-xl p-4">
+            <div className="glass-card p-4">
                 <div className="flex items-center gap-2 mb-3">
-                    <Sparkles className="w-4 h-4 text-indigo-400" />
-                    <h3 className="text-sm font-medium text-zinc-300">Coach's Insight</h3>
+                    <Sparkles className="w-4 h-4 text-indigo-400 animate-pulse" />
+                    <span className="text-sm font-medium text-zinc-400">Generating insight...</span>
                 </div>
                 <div className="space-y-2">
-                    <div className="h-4 bg-zinc-800/50 rounded animate-pulse" />
-                    <div className="h-4 bg-zinc-800/50 rounded animate-pulse w-4/5" />
+                    <div className="h-3 bg-zinc-800/50 rounded animate-pulse" />
+                    <div className="h-3 bg-zinc-800/50 rounded animate-pulse w-4/5" />
                 </div>
             </div>
         );
@@ -50,58 +56,70 @@ export default function CoachInsight() {
 
     if (error) {
         return (
-            <div className="bg-zinc-900/50 border border-zinc-800/50 rounded-xl p-4">
-                <div className="flex items-center justify-between mb-3">
+            <div className="glass-card p-4">
+                <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
-                        <AlertCircle className="w-4 h-4 text-red-400" />
-                        <h3 className="text-sm font-medium text-zinc-300">Coach's Insight</h3>
+                        <AlertCircle className="w-4 h-4 text-zinc-500" />
+                        <span className="text-sm text-zinc-500">{error}</span>
                     </div>
                     <button
                         onClick={fetchInsight}
                         className="p-1.5 rounded-lg text-zinc-500 hover:text-zinc-300 
-                     hover:bg-zinc-800 transition-colors"
+                                 hover:bg-zinc-800 transition-colors"
                     >
                         <RefreshCw className="w-3.5 h-3.5" />
                     </button>
                 </div>
-                <p className="text-sm text-zinc-500">{error}</p>
             </div>
         );
     }
 
     return (
-        <div className="bg-gradient-to-br from-indigo-500/10 to-purple-500/10 border border-indigo-500/20 
-                  rounded-xl p-4 relative overflow-hidden">
-            {/* Decorative gradient orb */}
-            <div className="absolute -top-8 -right-8 w-24 h-24 bg-indigo-500/10 rounded-full blur-2xl" />
+        <div className="glass-card p-4 relative overflow-hidden group">
+            {/* Subtle gradient accent line */}
+            <div className="absolute top-0 left-0 right-0 h-0.5 bg-gradient-to-r from-indigo-500/50 via-purple-500/50 to-indigo-500/50" />
 
-            <div className="relative">
-                <div className="flex items-center justify-between mb-3">
-                    <div className="flex items-center gap-2">
-                        <div className="p-1.5 rounded-lg bg-indigo-500/20">
-                            <Sparkles className="w-4 h-4 text-indigo-400" />
-                        </div>
-                        <h3 className="text-sm font-medium text-zinc-300">Coach's Insight</h3>
-                    </div>
-                    <button
-                        onClick={fetchInsight}
-                        className="p-1.5 rounded-lg text-zinc-500 hover:text-zinc-300 
-                     hover:bg-zinc-800/50 transition-colors"
-                        title="Refresh insight"
-                    >
-                        <RefreshCw className="w-3.5 h-3.5" />
-                    </button>
+            <div className="flex items-start gap-3">
+                {/* Icon */}
+                <div className="p-2 rounded-lg bg-gradient-to-br from-indigo-500/20 to-purple-500/20 shrink-0">
+                    <Sparkles className="w-4 h-4 text-indigo-400" />
                 </div>
 
-                <p className="text-sm text-zinc-300 leading-relaxed">
-                    {insight}
-                </p>
-
-                {activityCount > 0 && (
-                    <p className="text-xs text-zinc-500 mt-3">
-                        Based on {activityCount} activities today
+                {/* Content */}
+                <div className="flex-1 min-w-0">
+                    <p className="text-sm text-zinc-300 leading-relaxed">
+                        {displayInsight}
                     </p>
-                )}
+
+                    {/* Expand/collapse and meta */}
+                    <div className="flex items-center justify-between mt-2">
+                        <span className="text-xs text-zinc-500">
+                            {activityCount > 0 ? `${activityCount} activities today` : 'No activities yet'}
+                        </span>
+
+                        <div className="flex items-center gap-1">
+                            {canExpand && (
+                                <button
+                                    onClick={() => setIsExpanded(!isExpanded)}
+                                    className="p-1 rounded text-zinc-500 hover:text-zinc-300 transition-colors"
+                                >
+                                    {isExpanded ? (
+                                        <ChevronUp className="w-3.5 h-3.5" />
+                                    ) : (
+                                        <ChevronDown className="w-3.5 h-3.5" />
+                                    )}
+                                </button>
+                            )}
+                            <button
+                                onClick={fetchInsight}
+                                className="p-1 rounded text-zinc-500 hover:text-zinc-300 transition-colors"
+                                title="Refresh"
+                            >
+                                <RefreshCw className="w-3.5 h-3.5" />
+                            </button>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
     );

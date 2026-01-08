@@ -12,6 +12,7 @@ import EnergyBattery from './EnergyBattery';
 import CoachInsight from './CoachInsight';
 import LootButton from './LootButton';
 import CorrelationCard from './CorrelationCard';
+import ProjectionCard from './ProjectionCard';
 import { useAuth } from '../contexts/AuthContext';
 
 /**
@@ -63,7 +64,7 @@ function CustomLegend({ payload }) {
 }
 
 /**
- * Score Display Component with Loot Button integrated
+ * Score Display Component - Hero Card with Glassmorphism
  */
 function ScoreDisplay({ score, label, Icon, showLootButton = false }) {
     const { user } = useAuth();
@@ -73,64 +74,61 @@ function ScoreDisplay({ score, label, Icon, showLootButton = false }) {
     const isNegative = score < 0;
     const credits = user?.chest_credits || 0;
 
-    const getScoreColor = () => {
-        if (isPositive) return 'text-emerald-400';
-        if (isNegative) return 'text-red-400';
-        return 'text-zinc-400';
-    };
-
-    const getIconColor = () => {
-        if (isPositive) return 'text-emerald-500';
-        if (isNegative) return 'text-red-500';
-        return 'text-zinc-500';
-    };
-
-    const ScoreIcon = isPositive ? TrendingUp : isNegative ? TrendingDown : Minus;
-
     // Format score to 1 decimal for weighted scores
     const displayScore = typeof score === 'number' ?
         (Number.isInteger(score) ? score : score.toFixed(1)) : score;
 
     return (
         <>
-            <div className="bg-zinc-900/50 border border-zinc-800/50 rounded-xl p-4 relative">
-                <div className="flex items-center justify-between mb-2">
-                    <div className="flex items-center gap-2">
-                        <Icon className={`w-4 h-4 ${getIconColor()}`} />
-                        <span className="text-sm text-zinc-400">{label}</span>
+            <div className="glass-card p-5 relative overflow-hidden col-span-2">
+                {/* Subtle gradient background glow */}
+                <div className="absolute inset-0 bg-gradient-to-br from-purple-500/5 via-transparent to-cyan-500/5 pointer-events-none" />
+
+                <div className="relative z-10">
+                    <div className="flex items-center justify-between mb-3">
+                        <div className="flex items-center gap-2">
+                            <div className="p-2 rounded-lg bg-gradient-to-br from-indigo-500/20 to-purple-500/20">
+                                <Icon className="w-5 h-5 text-indigo-400" />
+                            </div>
+                            <span className="text-sm font-medium text-zinc-400 tracking-wide">{label}</span>
+                        </div>
+
+                        {/* Compact Loot Button */}
+                        {showLootButton && (
+                            <button
+                                onClick={() => setShowLoot(true)}
+                                className={`relative p-2.5 rounded-xl transition-all hover-lift
+                                          ${credits > 0
+                                        ? 'bg-gradient-to-br from-amber-500/20 to-orange-500/20 text-amber-400 glow-amber'
+                                        : 'bg-zinc-800/50 text-zinc-500 hover:bg-zinc-700/50'}`}
+                                title={credits > 0 ? `Open Chest (${credits} keys)` : 'No keys available'}
+                            >
+                                <Gift className="w-5 h-5" />
+                                {credits > 0 && (
+                                    <span className="absolute -top-1 -right-1 w-5 h-5 rounded-full 
+                                                   bg-gradient-to-br from-amber-400 to-orange-500
+                                                   flex items-center justify-center text-xs text-black font-bold
+                                                   shadow-lg">
+                                        {credits}
+                                    </span>
+                                )}
+                            </button>
+                        )}
                     </div>
 
-                    {/* Compact Loot Button */}
-                    {showLootButton && (
-                        <button
-                            onClick={() => setShowLoot(true)}
-                            className={`relative p-2 rounded-lg transition-all
-                                      ${credits > 0
-                                    ? 'bg-amber-500/20 text-amber-400 hover:bg-amber-500/30 animate-pulse hover:animate-none'
-                                    : 'bg-zinc-800 text-zinc-500 hover:bg-zinc-700'}`}
-                            title={credits > 0 ? `Open Chest (${credits} keys)` : 'No keys available'}
-                        >
-                            <Gift className="w-5 h-5" />
-                            {credits > 0 && (
-                                <span className="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-amber-500 
-                                               flex items-center justify-center text-xs text-black font-bold">
-                                    {credits}
-                                </span>
-                            )}
-                        </button>
-                    )}
-                </div>
-                <div className="flex items-center gap-2">
-                    <span className={`text-3xl font-bold ${getScoreColor()}`}>
-                        {score > 0 ? '+' : ''}{displayScore}
-                    </span>
-                    <ScoreIcon className={`w-5 h-5 ${getScoreColor()}`} />
+                    <div className="flex items-baseline gap-2">
+                        <span className={`text-5xl font-bold tracking-tight
+                                        ${isPositive ? 'gradient-text' : isNegative ? 'text-red-400' : 'text-zinc-400'}`}>
+                            {score > 0 ? '+' : ''}{displayScore}
+                        </span>
+                        <span className="text-lg text-zinc-500 font-medium">pts</span>
+                    </div>
                 </div>
             </div>
 
             {/* Loot Modal */}
             {showLoot && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm"
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md"
                     onClick={() => setShowLoot(false)}>
                     <div onClick={e => e.stopPropagation()}>
                         <LootButton embedded onClose={() => setShowLoot(false)} />
@@ -142,20 +140,28 @@ function ScoreDisplay({ score, label, Icon, showLootButton = false }) {
 }
 
 /**
- * Stat Card Component
+ * Stat Card Component - Glass styling
  */
 function StatCard({ value, label, Icon, color = 'indigo' }) {
-    const colorClasses = {
-        indigo: 'text-indigo-500',
-        emerald: 'text-emerald-500',
-        amber: 'text-amber-500'
+    const gradientClasses = {
+        indigo: 'from-indigo-500/20 to-blue-500/20',
+        emerald: 'from-emerald-500/20 to-teal-500/20',
+        amber: 'from-amber-500/20 to-orange-500/20'
+    };
+
+    const iconClasses = {
+        indigo: 'text-indigo-400',
+        emerald: 'text-emerald-400',
+        amber: 'text-amber-400'
     };
 
     return (
-        <div className="bg-zinc-900/50 border border-zinc-800/50 rounded-xl p-4">
+        <div className="glass-card p-4 hover-lift">
             <div className="flex items-center gap-2 mb-2">
-                <Icon className={`w-4 h-4 ${colorClasses[color]}`} />
-                <span className="text-sm text-zinc-400">{label}</span>
+                <div className={`p-1.5 rounded-lg bg-gradient-to-br ${gradientClasses[color]}`}>
+                    <Icon className={`w-4 h-4 ${iconClasses[color]}`} />
+                </div>
+                <span className="text-sm text-zinc-400 tracking-wide">{label}</span>
             </div>
             <span className="text-2xl font-bold text-zinc-100">
                 {value}
@@ -165,7 +171,7 @@ function StatCard({ value, label, Icon, color = 'indigo' }) {
 }
 
 /**
- * Dashboard Component
+ * Dashboard Component - Bento Grid Layout
  * Displays productivity score, visualizations, and category breakdown
  */
 export default function Dashboard({ dashboardData, isLoading }) {
@@ -184,21 +190,26 @@ export default function Dashboard({ dashboardData, isLoading }) {
     return (
         <div className="space-y-4">
             {/* Header */}
-            <div className="flex items-center gap-2">
-                <Target className="w-5 h-5 text-indigo-400" />
-                <h2 className="text-lg font-medium text-zinc-200">
+            <div className="flex items-center gap-3">
+                <div className="p-2 rounded-lg bg-gradient-to-br from-indigo-500/20 to-purple-500/20">
+                    <Target className="w-5 h-5 text-indigo-400" />
+                </div>
+                <h2 className="text-lg font-semibold text-zinc-200 tracking-tight">
                     Dashboard
                 </h2>
             </div>
 
-            {/* Coach's Insight - Top priority */}
+            {/* Coach's Insight */}
             <CoachInsight />
+
+            {/* Time Projection - Shock Analytics (key forces refresh on activity change) */}
+            <ProjectionCard key={dashboardData?.activity_count || 0} />
 
             {/* Energy Battery */}
             <EnergyBattery dashboardData={dashboardData} />
 
-            {/* Score Cards with integrated loot button */}
-            <div className="grid grid-cols-2 gap-3">
+            {/* Score Cards - 2 column layout */}
+            <div className="grid grid-cols-3 gap-3">
                 <ScoreDisplay
                     score={dashboardData?.daily_score || 0}
                     label="Daily Score"
@@ -213,12 +224,14 @@ export default function Dashboard({ dashboardData, isLoading }) {
                 />
             </div>
 
-            {/* Productivity Radar */}
-            <ProductivityRadar dashboardData={dashboardData} />
+            {/* Productivity Radar - Glass wrapped */}
+            <div className="glass-card p-4">
+                <ProductivityRadar dashboardData={dashboardData} />
+            </div>
 
             {/* Pie Chart - Category Breakdown */}
-            <div className="bg-zinc-900/50 border border-zinc-800/50 rounded-xl p-4">
-                <h3 className="text-sm font-medium text-zinc-400 mb-4">
+            <div className="glass-card p-4">
+                <h3 className="text-sm font-medium text-zinc-400 mb-4 tracking-wide">
                     Time by Category
                 </h3>
 

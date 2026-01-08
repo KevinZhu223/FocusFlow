@@ -32,8 +32,15 @@ class SourceEnum(PyEnum):
 
 class TimeframeEnum(PyEnum):
     """Goal timeframes"""
+    DAILY = "daily"
     WEEKLY = "weekly"
     MONTHLY = "monthly"
+
+
+class GoalTypeEnum(PyEnum):
+    """Types of goals"""
+    TARGET = "target"  # Achieve at least X hours (default)
+    LIMIT = "limit"    # Stay under X hours
 
 
 class RarityEnum(PyEnum):
@@ -78,6 +85,10 @@ class User(Base):
     
     # Loot Credits (Phase 4.5)
     chest_credits = Column(Integer, default=0)  # Credits earned from productive work
+    productive_minutes = Column(Integer, default=0)  # Cumulative productive minutes toward next key
+    
+    # Age for projection analytics (Phase 6)
+    birth_year = Column(Integer, nullable=True)  # User's birth year
 
     # Relationships
     activities = relationship("ActivityLog", back_populates="user", cascade="all, delete-orphan")
@@ -169,16 +180,17 @@ class Goal(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     user_id = Column(Integer, ForeignKey('users.id'), nullable=False, index=True)
     title = Column(String(255), nullable=True)  # Custom goal name
-    category = Column(Enum(CategoryEnum), nullable=False)
+    category = Column(Enum(CategoryEnum), nullable=True)  # Optional - LLM can auto-categorize
     target_value = Column(Integer, nullable=False)  # Target hours
     timeframe = Column(Enum(TimeframeEnum), nullable=False)
+    goal_type = Column(Enum(GoalTypeEnum), default=GoalTypeEnum.TARGET, nullable=False)  # target or limit
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
     # Relationship
     user = relationship("User", back_populates="goals")
 
     def __repr__(self):
-        return f"<Goal(id={self.id}, title='{self.title}', category={self.category.value}, target={self.target_value}h/{self.timeframe.value})>"
+        return f"<Goal(id={self.id}, title='{self.title}', type={self.goal_type.value}, target={self.target_value}h/{self.timeframe.value})>"
 
     def to_dict(self):
         return {
@@ -188,6 +200,7 @@ class Goal(Base):
             "category": self.category.value if self.category else None,
             "target_value": self.target_value,
             "timeframe": self.timeframe.value if self.timeframe else None,
+            "goal_type": self.goal_type.value if self.goal_type else "target",
             "created_at": self.created_at.isoformat() if self.created_at else None
         }
 
@@ -249,7 +262,7 @@ class Item(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     name = Column(String(100), unique=True, nullable=False)
     rarity = Column(Enum(RarityEnum), nullable=False)
-    image_emoji = Column(String(10), nullable=False)  # Emoji representation
+    icon_name = Column(String(50), nullable=False)  # Lucide React icon name
     description = Column(String(500), nullable=False)
 
     # Relationship
@@ -263,7 +276,7 @@ class Item(Base):
             "id": self.id,
             "name": self.name,
             "rarity": self.rarity.value if self.rarity else None,
-            "image_emoji": self.image_emoji,
+            "icon_name": self.icon_name,
             "description": self.description
         }
 
@@ -277,6 +290,7 @@ class UserItem(Base):
     item_id = Column(Integer, ForeignKey('items.id'), nullable=False, index=True)
     count = Column(Integer, default=1)  # How many of this item user has
     first_obtained_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    is_broken = Column(Boolean, default=False)  # Item decay: broken items can't be used
 
     # Relationships
     user = relationship("User", back_populates="items")
@@ -292,6 +306,7 @@ class UserItem(Base):
             "item_id": self.item_id,
             "item": self.item.to_dict() if self.item else None,
             "count": self.count,
+            "is_broken": self.is_broken,
             "first_obtained_at": self.first_obtained_at.isoformat() if self.first_obtained_at else None
         }
 

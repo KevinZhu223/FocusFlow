@@ -55,7 +55,7 @@ export default function EnergyBattery({ dashboardData }) {
     }
 
     return (
-        <div className="bg-zinc-900/50 border border-zinc-800/50 rounded-xl p-4">
+        <div className="glass-card p-4">
             <div className="flex items-center justify-between mb-3">
                 <h3 className="text-sm font-medium text-zinc-300">Daily Energy</h3>
                 <div className={`flex items-center gap-1 ${colorClass}`}>
