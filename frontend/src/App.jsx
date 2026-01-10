@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, Link, useLocation } from 'react-router-dom';
 import {
   Zap, RefreshCw, AlertCircle, Wifi, WifiOff, LogOut,
-  Target, Trophy, User, Home, CalendarDays, Users
+  Target, Trophy, User, Home, CalendarDays, Users, Swords
 } from 'lucide-react';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import LoginPage from './pages/LoginPage';
@@ -12,12 +12,14 @@ import LeaderboardPage from './pages/LeaderboardPage';
 import ProfilePage from './pages/ProfilePage';
 import HistoryPage from './pages/HistoryPage';
 import SocialPage from './pages/SocialPage';
+import ChallengesPage from './pages/ChallengesPage';
 import ActivityInput from './components/ActivityInput';
 import Timeline from './components/Timeline';
 import Dashboard from './components/Dashboard';
 import InterventionAlert from './components/InterventionAlert';
 import MorningCheckIn from './components/MorningCheckIn';
-import { logActivity, getActivities, getDashboard, deleteActivity, checkHealth } from './api';
+import LevelUpModal from './components/LevelUpModal';
+import { logActivity, getActivities, getDashboard, deleteActivity, updateActivity, checkHealth } from './api';
 
 /**
  * Protected Route Wrapper
@@ -115,6 +117,7 @@ function AppShell({ children }) {
               <NavLink to="/goals" icon={Target} label="Goals" />
               <NavLink to="/history" icon={CalendarDays} label="History" />
               <NavLink to="/social" icon={Users} label="Friends" />
+              <NavLink to="/challenges" icon={Swords} label="Challenges" />
               <NavLink to="/leaderboard" icon={Trophy} label="Leaderboard" />
               <NavLink to="/profile" icon={User} label="Profile" />
             </nav>
@@ -170,7 +173,7 @@ function AppShell({ children }) {
       <footer className="border-t border-zinc-800/50 mt-12 py-6">
         <div className="max-w-[1600px] mx-auto px-4 md:px-8">
           <p className="text-center text-sm text-zinc-600">
-            FocusFlow Phase 4 • Built with React, Flask & PostgreSQL
+            FocusFlow • Built with React, Flask & PostgreSQL
           </p>
         </div>
       </footer>
@@ -188,6 +191,7 @@ function HomePage() {
   const [isLoading, setIsLoading] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState(null);
+  const [levelUpData, setLevelUpData] = useState(null);
 
   const fetchData = useCallback(async () => {
     setIsLoading(true);
@@ -224,10 +228,12 @@ function HomePage() {
         setActivities(prev => [result.activity, ...prev]);
       }
 
-      // Show gamification result if leveled up or got badges
+      // Show level up modal if leveled up
       if (result.gamification?.leveled_up) {
-        // Could show a toast/notification here
-        console.log('Level up!', result.gamification);
+        setLevelUpData({
+          oldLevel: result.gamification.old_level,
+          newLevel: result.gamification.new_level
+        });
       }
 
       // Instantly update user chest credits without page refresh
@@ -254,6 +260,23 @@ function HomePage() {
     } catch (err) {
       console.error('Failed to delete activity:', err);
       setError('Failed to delete activity.');
+    }
+  };
+
+  const handleEditActivity = async (activityId, data) => {
+    try {
+      const result = await updateActivity(activityId, data);
+      // Update the activity in the list
+      setActivities(prev => prev.map(a =>
+        a.id === activityId ? result.activity : a
+      ));
+      // Refresh dashboard to update scores
+      const dashboardRes = await getDashboard();
+      setDashboardData(dashboardRes);
+    } catch (err) {
+      console.error('Failed to update activity:', err);
+      setError('Failed to update activity.');
+      throw err; // Re-throw so ActivityCard knows it failed
     }
   };
 
@@ -290,6 +313,7 @@ function HomePage() {
               <Timeline
                 activities={activities}
                 onDeleteActivity={handleDeleteActivity}
+                onEditActivity={handleEditActivity}
                 isLoading={isLoading}
               />
             </section>
@@ -306,6 +330,13 @@ function HomePage() {
           </aside>
         </div>
       </main>
+
+      {/* Level Up Modal */}
+      <LevelUpModal
+        isOpen={!!levelUpData}
+        onClose={() => setLevelUpData(null)}
+        levelData={levelUpData}
+      />
     </>
   );
 }
@@ -374,6 +405,18 @@ export default function App() {
                 <AppShell>
                   <PageWrapper>
                     <SocialPage />
+                  </PageWrapper>
+                </AppShell>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/challenges"
+            element={
+              <ProtectedRoute>
+                <AppShell>
+                  <PageWrapper>
+                    <ChallengesPage />
                   </PageWrapper>
                 </AppShell>
               </ProtectedRoute>

@@ -35,13 +35,40 @@ FOCUS_MULTIPLIER = 1.2
 # System prompt for activity parsing
 ACTIVITY_PARSER_PROMPT = """You are a data extraction engine for a productivity tracking app. Analyze the user's natural language text describing an activity they did.
 
-IMPORTANT CONTEXT RULES:
-- "Coding a game" or "playing games" = Leisure (entertainment/hobby)
-- "Coding a project" or "working on code" = Career (productive work)
-- "Watching educational content" = Career (learning)
-- "Watching Netflix/TV" = Leisure (entertainment)
-- "Meal prep" or "cooking healthy" = Health
-- "Cooking dinner" = Chores
+CATEGORY DEFINITIONS (use these EXACTLY):
+- **Career**: Productive work, learning, professional development, building things, working on projects. Examples: coding, studying, research, meetings, emails, coursework, working on projects, side projects, personal projects.
+- **Health**: Physical/mental wellness activities. Examples: gym, running, yoga, meditation, cooking healthy meals, sleeping well.
+- **Leisure**: Entertainment, relaxation, PASSIVE consumption, playing games. Examples: video games, Netflix, social media scrolling, YouTube, TikTok, Reddit, browsing internet.
+- **Chores**: Necessary household/life tasks. Examples: cleaning, laundry, groceries, dishes, errands, organizing.
+- **Social**: REAL interpersonal interaction with other humans. Examples: dinner with friends, calling family, hanging out with people, dates, parties.
+
+CRITICAL RULES FOR CAREER vs LEISURE:
+
+✅ CAREER (productive work/building things):
+- "Worked on project" / "Working on project" → CAREER
+- "Worked on personal project" / "Side project" → CAREER (this is productive work!)
+- "Worked on [anything]" → CAREER (the verb "worked" implies productive effort)
+- "Coding" / "Programming" / "Building" → CAREER (unless explicitly "for fun" or "playing around")
+- "Studying" / "Learning" / "Research" → CAREER
+- "Watching tutorials" / "Educational content" → CAREER
+
+❌ LEISURE (entertainment/passive consumption):
+- "Played games" / "Gaming" / "Video games" → LEISURE
+- "Coding a game FOR FUN" / "Making a game as a hobby" → LEISURE (explicit hobby marker)
+- "Netflix" / "Movies" / "TV shows" → LEISURE
+- "Social media" / "Scrolling" / "Browsing Reddit" → LEISURE
+- "YouTube" (unless educational) → LEISURE
+
+THE KEY TEST: Does the phrase contain "worked on" or "working on"? 
+→ If YES, it's almost always CAREER (productive effort implied)
+→ If it says "played" or "playing", it's LEISURE
+
+⚠️ OTHER EDGE CASES:
+- "Social media" = LEISURE (NOT Social - it's passive entertainment)
+- "Talking to/with friends/family" = SOCIAL (real human interaction)
+- "Board games with friends" = SOCIAL (in-person social activity)
+- "Meal prep/cooking healthy" with health intent = HEALTH
+- "Cooking dinner" as routine = CHORES
 
 Return STRICT JSON with these fields:
 {
@@ -178,34 +205,64 @@ def parse_with_fallback(text: str) -> Dict[str, Any]:
     # Category detection with context awareness
     category = CategoryEnum.CAREER  # Default
     
-    # Leisure indicators (check first as they're more specific)
-    leisure_keywords = ['game', 'gaming', 'netflix', 'tv', 'youtube', 'movie', 
-                       'relax', 'chill', 'scroll', 'social media', 'tiktok']
-    if any(kw in text_lower for kw in leisure_keywords):
-        # Context check for "coding a game" - still leisure
-        if 'coding' in text_lower and 'game' in text_lower:
-            category = CategoryEnum.LEISURE
-        else:
-            category = CategoryEnum.LEISURE
+    # FIRST: Check for explicit work patterns - these ALWAYS take priority
+    # The phrase "worked on" or "working on" strongly implies productive effort
+    work_patterns = ['worked on', 'working on', 'spent time on', 'finished', 
+                     'completed', 'built', 'building', 'developed', 'developing']
+    is_work_phrase = any(wp in text_lower for wp in work_patterns)
+    
+    # Check for explicit "for fun" or hobby markers that override work detection
+    fun_markers = ['for fun', 'as a hobby', 'just for fun', 'playing around', 
+                   'messing around', 'fooling around']
+    is_for_fun = any(fm in text_lower for fm in fun_markers)
+    
+    # If it has work pattern and no fun marker, it's Career
+    if is_work_phrase and not is_for_fun:
+        category = CategoryEnum.CAREER
+    
+    # Leisure indicators - check these only if not already classified as work
+    # CRITICAL: "social media" is LEISURE, not Social!
+    elif any(kw in text_lower for kw in [
+        'game', 'gaming', 'played', 'playing', 'netflix', 'tv', 'youtube', 'movie', 'movies',
+        'relax', 'chill', 'scroll', 'scrolling', 'browse', 'browsing',
+        'social media', 'instagram', 'tiktok', 'twitter', 'reddit', 'facebook',
+        'snapchat', 'discord', 'twitch', 'streamer', 'anime', 'manga',
+        'binge', 'show', 'series', 'podcast', 'spotify',
+        'phone', 'internet', 'surf', 'surfing', 'leisure',
+        'entertainment', 'downtime', 'procrastinat'
+    ]) and not is_work_phrase:
+        category = CategoryEnum.LEISURE
     
     # Career indicators
-    elif any(kw in text_lower for kw in ['work', 'study', 'code', 'project', 'meeting', 
-                                          'email', 'learn', 'read', 'research']):
+    elif any(kw in text_lower for kw in ['work', 'study', 'studying', 'code', 'coding', 
+                                          'project', 'meeting', 'email', 'learn', 'learning',
+                                          'read', 'reading', 'research', 'class', 'course',
+                                          'homework', 'assignment', 'practice', 'training',
+                                          'interview', 'job', 'professional', 'side project',
+                                          'personal project']):
         category = CategoryEnum.CAREER
     
     # Health indicators
-    elif any(kw in text_lower for kw in ['gym', 'exercise', 'workout', 'run', 'yoga',
-                                          'meditat', 'walk', 'sleep', 'nap']):
+    elif any(kw in text_lower for kw in ['gym', 'exercise', 'workout', 'run', 'running',
+                                          'yoga', 'meditat', 'walk', 'walking', 'sleep',
+                                          'nap', 'stretch', 'lift', 'swim', 'bike', 
+                                          'hike', 'sport', 'healthy', 'health']):
         category = CategoryEnum.HEALTH
     
-    # Social indicators
-    elif any(kw in text_lower for kw in ['friend', 'family', 'dinner', 'lunch', 'call',
-                                          'hangout', 'party', 'date']):
+    # Social indicators - requires REAL human interaction
+    # Look for keywords indicating actual people, not platforms
+    elif any(kw in text_lower for kw in ['with friend', 'with family', 'with mom', 'with dad',
+                                          'with brother', 'with sister', 'with partner',
+                                          'hangout', 'hanging out', 'party', 'date',
+                                          'dinner with', 'lunch with', 'coffee with',
+                                          'called', 'call with', 'talking to', 'talked to',
+                                          'visited', 'visiting', 'met with', 'meeting with']):
         category = CategoryEnum.SOCIAL
     
     # Chores indicators
-    elif any(kw in text_lower for kw in ['clean', 'laundry', 'dishes', 'grocery',
-                                          'errand', 'organize', 'vacuum']):
+    elif any(kw in text_lower for kw in ['clean', 'cleaning', 'laundry', 'dishes', 'grocery',
+                                          'groceries', 'errand', 'organize', 'vacuum',
+                                          'cook', 'cooking', 'chore', 'task', 'housework']):
         category = CategoryEnum.CHORES
     
     # Focus detection
@@ -309,23 +366,61 @@ def generate_daily_insights(activities: list) -> str:
 # Test function
 if __name__ == "__main__":
     test_inputs = [
-        "Studied Python for 2 hours",
-        "Played video games all evening",
-        "Deep work coding session for 3 hours, really focused",
-        "Watched Netflix",
-        "Went to the gym for 45 minutes",
-        "Coding a game for fun",
-        "Coding a project for work for 2 hours"
+        # CRITICAL: "worked on" should be CAREER even with "personal"
+        ("Worked on personal project for 30 mins", "Career"),
+        ("Working on side project", "Career"),
+        ("Spent time on personal project", "Career"),
+        ("Finished my side project", "Career"),
+        ("Building a personal app", "Career"),
+        
+        # But "for fun" should still be LEISURE
+        ("Coding a game for fun", "Leisure"),
+        ("Working on hobby project just for fun", "Leisure"),
+        
+        # Social media stays LEISURE
+        ("Social media for 1 hr", "Leisure"),
+        ("Scrolling Instagram", "Leisure"),
+        ("Browsing Reddit for 30 min", "Leisure"),
+        
+        # Standard cases
+        ("Studied Python for 2 hours", "Career"),
+        ("Played video games all evening", "Leisure"),
+        ("Watched Netflix", "Leisure"),
+        ("Went to the gym for 45 minutes", "Health"),
+        
+        # REAL Social interactions
+        ("Dinner with friends", "Social"),
+        ("Called mom for 30 min", "Social"),
     ]
     
-    print("NLP Parser Test Results (Phase 2):")
-    print("=" * 60)
+    print("NLP Parser Test Results (Edge Case Testing):")
+    print("=" * 70)
     
-    for text in test_inputs:
+    passed = 0
+    failed = 0
+    
+    for item in test_inputs:
+        if isinstance(item, tuple):
+            text, expected = item
+        else:
+            text, expected = item, None
+            
         result = parse_activity(text)
+        actual = result['category'].value
+        
+        if expected:
+            status = "✓ PASS" if actual == expected else f"✗ FAIL (expected {expected})"
+            if actual == expected:
+                passed += 1
+            else:
+                failed += 1
+        else:
+            status = ""
+        
         print(f"\nInput: '{text}'")
-        print(f"  Activity: {result['activity_name']}")
-        print(f"  Category: {result['category'].value}")
+        print(f"  Category: {actual} {status}")
         print(f"  Duration: {result['duration_minutes']} min")
-        print(f"  Focus: {result['is_focus_session']}")
         print(f"  Score: {result['productivity_score']}")
+    
+    print("\n" + "=" * 70)
+    print(f"Results: {passed} passed, {failed} failed")

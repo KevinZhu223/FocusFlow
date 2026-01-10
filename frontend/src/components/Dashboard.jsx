@@ -6,14 +6,16 @@
 
 import { useState, useEffect } from 'react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from 'recharts';
-import { TrendingUp, TrendingDown, Minus, Activity, Zap, Target, Gift, Key } from 'lucide-react';
+import { TrendingUp, TrendingDown, Minus, Activity, Zap, Target, Gift, Key, Flame } from 'lucide-react';
 import ProductivityRadar from './ProductivityRadar';
 import EnergyBattery from './EnergyBattery';
 import CoachInsight from './CoachInsight';
 import LootButton from './LootButton';
 import CorrelationCard from './CorrelationCard';
 import ProjectionCard from './ProjectionCard';
+import OracleCard from './OracleCard';
 import { useAuth } from '../contexts/AuthContext';
+import { getOracleInsight } from '../api';
 
 /**
  * Category colors for the pie chart
@@ -140,6 +142,55 @@ function ScoreDisplay({ score, label, Icon, showLootButton = false }) {
 }
 
 /**
+ * Streak Widget - Shows current activity streak with flame animation
+ */
+function StreakWidget({ streak }) {
+    const currentStreak = streak?.current_streak || 0;
+    const longestStreak = streak?.longest_streak || 0;
+    const streakActive = streak?.streak_active || false;
+
+    return (
+        <div className={`glass-card p-4 transition-all ${streakActive ? 'border-orange-500/30' : ''}`}>
+            <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                    <div className={`w-12 h-12 rounded-xl flex items-center justify-center
+                                  ${currentStreak > 0
+                            ? 'bg-gradient-to-br from-orange-500/20 to-red-500/20'
+                            : 'bg-zinc-800/50'}`}>
+                        <Flame className={`w-6 h-6 ${currentStreak > 0 ? 'text-orange-400' : 'text-zinc-600'}
+                                        ${streakActive ? 'animate-pulse' : ''}`} />
+                    </div>
+                    <div>
+                        <div className="flex items-baseline gap-2">
+                            <span className={`text-3xl font-bold ${currentStreak > 0 ? 'text-orange-400' : 'text-zinc-500'}`}>
+                                {currentStreak}
+                            </span>
+                            <span className="text-sm text-zinc-500">day streak</span>
+                        </div>
+                        {longestStreak > currentStreak && (
+                            <p className="text-xs text-zinc-600 mt-0.5">
+                                Best: {longestStreak} days
+                            </p>
+                        )}
+                    </div>
+                </div>
+                {currentStreak >= 7 && (
+                    <span className="text-2xl">🔥</span>
+                )}
+                {currentStreak >= 30 && (
+                    <span className="text-2xl">⭐</span>
+                )}
+            </div>
+            {!streakActive && currentStreak === 0 && (
+                <p className="text-xs text-zinc-600 mt-2">
+                    Log an activity to start your streak!
+                </p>
+            )}
+        </div>
+    );
+}
+
+/**
  * Stat Card Component - Glass styling
  */
 function StatCard({ value, label, Icon, color = 'indigo' }) {
@@ -175,6 +226,26 @@ function StatCard({ value, label, Icon, color = 'indigo' }) {
  * Displays productivity score, visualizations, and category breakdown
  */
 export default function Dashboard({ dashboardData, isLoading }) {
+    // Oracle insight state
+    const [oracleInsight, setOracleInsight] = useState(null);
+    const [oracleLoading, setOracleLoading] = useState(true);
+
+    // Fetch oracle insight on mount and when activities change
+    useEffect(() => {
+        const fetchOracle = async () => {
+            try {
+                setOracleLoading(true);
+                const insight = await getOracleInsight();
+                setOracleInsight(insight);
+            } catch (err) {
+                console.error('Failed to fetch oracle insight:', err);
+            } finally {
+                setOracleLoading(false);
+            }
+        };
+        fetchOracle();
+    }, [dashboardData?.activity_count]); // Refresh when activity count changes
+
     // Prepare pie chart data
     const pieData = dashboardData?.category_breakdown
         ? Object.entries(dashboardData.category_breakdown).map(([category, data]) => ({
@@ -199,6 +270,9 @@ export default function Dashboard({ dashboardData, isLoading }) {
                 </h2>
             </div>
 
+            {/* The Oracle - AI Analytics */}
+            <OracleCard insight={oracleInsight} isLoading={oracleLoading} />
+
             {/* Coach's Insight */}
             <CoachInsight />
 
@@ -207,6 +281,9 @@ export default function Dashboard({ dashboardData, isLoading }) {
 
             {/* Energy Battery */}
             <EnergyBattery dashboardData={dashboardData} />
+
+            {/* Streak Widget */}
+            <StreakWidget streak={dashboardData?.streak} />
 
             {/* Score Cards - 2 column layout */}
             <div className="grid grid-cols-3 gap-3">

@@ -160,8 +160,11 @@ function NewGoalForm({ onSubmit, isSubmitting }) {
 
     const handleSubmit = (e) => {
         e.preventDefault();
-        onSubmit(targetValue, timeframe, title.trim() || null, goalType);
+        // Enforce minimum 1 hour
+        const validatedValue = Math.max(1, Math.min(100, parseInt(targetValue) || 1));
+        onSubmit(validatedValue, timeframe, title.trim() || null, goalType);
         setTitle('');
+        setTargetValue(10); // Reset to default
     };
 
     const selectedType = GOAL_TYPES.find(t => t.value === goalType);

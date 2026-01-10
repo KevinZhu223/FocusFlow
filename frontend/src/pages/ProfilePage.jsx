@@ -57,7 +57,202 @@ function LevelProgress({ levelProgress }) {
     );
 }
 
+// All possible badges with their progress requirements
+const ALL_BADGES = [
+    { name: "First Steps", description: "Log your first activity", icon: "Footprints", requirement: { type: "activities", value: 1 } },
+    { name: "Night Owl", description: "Log an activity between 10 PM and 4 AM", icon: "Moon", requirement: { type: "time", value: "10PM-4AM" } },
+    { name: "Early Bird", description: "Log an activity before 7 AM", icon: "Sunrise", requirement: { type: "time", value: "before 7AM" } },
+    { name: "Weekend Warrior", description: "Log over 5 hours on a weekend day", icon: "Sword", requirement: { type: "hours", value: 5 } },
+    { name: "Iron Streak", description: "Log activities for 7 consecutive days", icon: "Flame", requirement: { type: "streak", value: 7 } },
+    { name: "Centurion", description: "Log 100 total activities", icon: "Trophy", requirement: { type: "activities", value: 100 } },
+    { name: "Focused Mind", description: "Complete 10 focus sessions", icon: "Brain", requirement: { type: "focus", value: 10 } },
+    { name: "Career Champion", description: "Log 50 hours of Career activities", icon: "Briefcase", requirement: { type: "career_hours", value: 50 } },
+    { name: "Health Hero", description: "Log 30 hours of Health activities", icon: "Heart", requirement: { type: "health_hours", value: 30 } },
+    { name: "Social Butterfly", description: "Log 20 hours of Social activities", icon: "Users", requirement: { type: "social_hours", value: 20 } },
+];
+
+function BadgeShowcase({ badges, stats }) {
+    // Get earned badge names
+    const earnedBadgeNames = new Set(badges?.map(ub => ub.badge?.name) || []);
+
+    // Combine earned badges with locked ones
+    const allBadgesWithStatus = ALL_BADGES.map(badgeDef => {
+        const earned = badges?.find(ub => ub.badge?.name === badgeDef.name);
+        return {
+            ...badgeDef,
+            earned: !!earned,
+            earnedAt: earned?.earned_at,
+            badge: earned?.badge
+        };
+    });
+
+    // Get top 3 earned badges for hero section
+    const topBadges = allBadgesWithStatus
+        .filter(b => b.earned)
+        .slice(0, 3);
+
+    // Calculate progress for locked badges
+    const getProgress = (badge) => {
+        if (!stats) return { current: 0, max: 1, percent: 0 };
+
+        const req = badge.requirement;
+        switch (req.type) {
+            case "activities":
+                return {
+                    current: Math.min(stats.total_activities || 0, req.value),
+                    max: req.value,
+                    percent: Math.min(100, ((stats.total_activities || 0) / req.value) * 100)
+                };
+            case "career_hours":
+                const careerHours = (stats.career_minutes || 0) / 60;
+                return {
+                    current: Math.min(careerHours, req.value).toFixed(1),
+                    max: req.value,
+                    percent: Math.min(100, (careerHours / req.value) * 100)
+                };
+            case "health_hours":
+                const healthHours = (stats.health_minutes || 0) / 60;
+                return {
+                    current: Math.min(healthHours, req.value).toFixed(1),
+                    max: req.value,
+                    percent: Math.min(100, (healthHours / req.value) * 100)
+                };
+            case "social_hours":
+                const socialHours = (stats.social_minutes || 0) / 60;
+                return {
+                    current: Math.min(socialHours, req.value).toFixed(1),
+                    max: req.value,
+                    percent: Math.min(100, (socialHours / req.value) * 100)
+                };
+            case "streak":
+                return {
+                    current: Math.min(stats.current_streak || 0, req.value),
+                    max: req.value,
+                    percent: Math.min(100, ((stats.current_streak || 0) / req.value) * 100)
+                };
+            case "focus":
+                return {
+                    current: Math.min(stats.focus_sessions || 0, req.value),
+                    max: req.value,
+                    percent: Math.min(100, ((stats.focus_sessions || 0) / req.value) * 100)
+                };
+            default:
+                return { current: "?", max: "?", percent: 0 };
+        }
+    };
+
+    return (
+        <div className="space-y-6">
+            {/* Hero Section - Top Badges */}
+            {topBadges.length > 0 && (
+                <div className="glass-card p-6 bg-gradient-to-br from-amber-500/10 via-transparent to-purple-500/10">
+                    <h3 className="text-sm font-medium text-amber-400 uppercase tracking-wider mb-4">
+                        🏆 Top Achievements
+                    </h3>
+                    <div className="flex flex-wrap gap-4 justify-center">
+                        {topBadges.map((badge, index) => {
+                            const BadgeIcon = getBadgeIcon(badge.icon);
+                            return (
+                                <div
+                                    key={badge.name}
+                                    className={`relative flex flex-col items-center p-4 rounded-2xl bg-zinc-900/60 
+                                              border-2 transition-transform hover:scale-105
+                                              ${index === 0 ? 'border-amber-500/50 shadow-lg shadow-amber-500/20' :
+                                            index === 1 ? 'border-zinc-400/50' : 'border-amber-700/50'}`}
+                                    style={{ minWidth: '120px' }}
+                                >
+                                    {index === 0 && (
+                                        <div className="absolute -top-2 -right-2 text-2xl">👑</div>
+                                    )}
+                                    <div className={`w-14 h-14 rounded-xl flex items-center justify-center mb-2
+                                                   ${index === 0 ? 'bg-amber-500/20' :
+                                            index === 1 ? 'bg-zinc-400/20' : 'bg-amber-700/20'}`}>
+                                        <BadgeIcon className={`w-7 h-7 ${index === 0 ? 'text-amber-400' :
+                                            index === 1 ? 'text-zinc-300' : 'text-amber-600'}`} />
+                                    </div>
+                                    <span className="text-sm font-semibold text-zinc-100 text-center">{badge.name}</span>
+                                </div>
+                            );
+                        })}
+                    </div>
+                </div>
+            )}
+
+            {/* All Badges Grid */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                {allBadgesWithStatus.map(badge => {
+                    const BadgeIcon = getBadgeIcon(badge.icon);
+                    const progress = !badge.earned ? getProgress(badge) : null;
+
+                    return (
+                        <div
+                            key={badge.name}
+                            className={`relative rounded-xl p-5 transition-all duration-300
+                                      ${badge.earned
+                                    ? 'bg-zinc-900/50 border border-amber-500/30 hover:border-amber-500/50'
+                                    : 'bg-zinc-900/30 border border-zinc-800/50 opacity-60 hover:opacity-80'}`}
+                        >
+                            <div className="flex items-start gap-4">
+                                <div className={`w-12 h-12 rounded-xl flex items-center justify-center shrink-0
+                                              ${badge.earned ? 'bg-amber-500/20' : 'bg-zinc-800/50'}`}>
+                                    <BadgeIcon className={`w-6 h-6 ${badge.earned ? 'text-amber-400' : 'text-zinc-600'}`} />
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                    <div className="flex items-center gap-2">
+                                        <h4 className={`font-semibold truncate ${badge.earned ? 'text-zinc-100' : 'text-zinc-500'}`}>
+                                            {badge.name}
+                                        </h4>
+                                        {badge.earned && (
+                                            <span className="text-xs px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-400">
+                                                ✓
+                                            </span>
+                                        )}
+                                    </div>
+                                    <p className={`text-sm mt-1 ${badge.earned ? 'text-zinc-400' : 'text-zinc-600'}`}>
+                                        {badge.description}
+                                    </p>
+
+                                    {/* Progress bar for locked badges */}
+                                    {!badge.earned && progress && progress.percent > 0 && (
+                                        <div className="mt-3">
+                                            <div className="flex justify-between text-xs text-zinc-500 mb-1">
+                                                <span>{progress.current} / {progress.max}</span>
+                                                <span>{Math.round(progress.percent)}%</span>
+                                            </div>
+                                            <div className="h-1.5 bg-zinc-800 rounded-full overflow-hidden">
+                                                <div
+                                                    className="h-full bg-gradient-to-r from-indigo-500 to-purple-500 transition-all"
+                                                    style={{ width: `${progress.percent}%` }}
+                                                />
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {/* Earned date */}
+                                    {badge.earned && badge.earnedAt && (
+                                        <p className="text-xs text-zinc-600 mt-2">
+                                            Earned {new Date(badge.earnedAt).toLocaleDateString()}
+                                        </p>
+                                    )}
+                                </div>
+                            </div>
+
+                            {/* Locked overlay icon */}
+                            {!badge.earned && (
+                                <div className="absolute top-3 right-3 text-zinc-700">
+                                    <LucideIcons.Lock className="w-4 h-4" />
+                                </div>
+                            )}
+                        </div>
+                    );
+                })}
+            </div>
+        </div>
+    );
+}
+
 function BadgeGrid({ badges }) {
+    // Fallback to old simple grid if no enhanced features needed
     if (!badges || badges.length === 0) {
         return (
             <div className="bg-zinc-900/50 border border-zinc-800/50 rounded-xl p-8 text-center">
@@ -196,7 +391,7 @@ function VaultSection() {
                 {allItems.map(item => (
                     <div
                         key={item.id}
-                        className="group relative"
+                        className="group relative flex flex-col items-center"
                         onClick={() => item.owned && setSelectedItem(item)}
                     >
                         <ItemCard
@@ -213,7 +408,7 @@ function VaultSection() {
                             <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-2
                                           bg-zinc-800/95 backdrop-blur-sm border border-zinc-700 rounded-lg 
                                           opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none
-                                          whitespace-nowrap z-10 shadow-xl text-center">
+                                          whitespace-nowrap z-20 shadow-xl text-center">
                                 <div className="text-sm text-zinc-100 font-medium">{item.name}</div>
                                 <div className={`text-xs ${item.rarity === 'Common' ? 'text-zinc-400' :
                                     item.rarity === 'Rare' ? 'text-blue-400' :
@@ -439,13 +634,16 @@ export default function ProfilePage() {
                 <StatsGrid stats={profile.stats} />
             )}
 
-            {/* Badges */}
+            {/* Badges & Achievements */}
             <div>
                 <h2 className="text-xl font-semibold text-zinc-100 mb-4 flex items-center gap-2">
                     <Award className="w-6 h-6 text-amber-400" />
-                    Badges
+                    Achievements
+                    <span className="text-sm font-normal text-zinc-500 ml-2">
+                        {profile?.badges?.length || 0} / {ALL_BADGES.length} unlocked
+                    </span>
                 </h2>
-                <BadgeGrid badges={profile?.badges} />
+                <BadgeShowcase badges={profile?.badges} stats={profile?.stats} />
             </div>
 
             {/* The Vault - Collection */}

@@ -179,6 +179,30 @@ export async function deleteActivity(activityId) {
     return handleResponse(response);
 }
 
+/**
+ * Update an activity by ID
+ * Allows editing activity_name, duration_minutes, and category
+ */
+export async function updateActivity(activityId, data) {
+    const response = await fetch(`${API_BASE}/activities/${activityId}`, {
+        method: 'PUT',
+        headers: getHeaders(),
+        body: JSON.stringify(data),
+    });
+    return handleResponse(response);
+}
+
+/**
+ * Get weekly recap data for the modal
+ */
+export async function getWeeklyRecap() {
+    const response = await fetch(`${API_BASE}/weekly-recap`, {
+        method: 'GET',
+        headers: getHeaders(),
+    });
+    return handleResponse(response);
+}
+
 // ============================================
 // Insights API
 // ============================================
@@ -209,6 +233,32 @@ export async function getHeatmapData() {
     params.append('tz_offset', getTimezoneOffset());
 
     const response = await fetch(`${API_BASE}/activities/heatmap?${params}`, {
+        headers: getHeaders(),
+    });
+    return handleResponse(response);
+}
+
+// ============================================
+// Oracle AI Analytics API (Phase 7)
+// ============================================
+
+/**
+ * Get AI-powered Oracle insight
+ * Returns the single highest-priority insight for the user
+ */
+export async function getOracleInsight() {
+    const response = await fetch(`${API_BASE}/oracle`, {
+        headers: getHeaders(),
+    });
+    return handleResponse(response);
+}
+
+/**
+ * Get all Oracle insights
+ * Returns list of all available insights sorted by priority
+ */
+export async function getAllOracleInsights() {
+    const response = await fetch(`${API_BASE}/oracle?full=true`, {
         headers: getHeaders(),
     });
     return handleResponse(response);
@@ -454,6 +504,64 @@ export async function acceptFriendRequest(friendshipId) {
 export async function removeFriend(friendshipId) {
     const response = await fetch(`${API_BASE}/friends/${friendshipId}`, {
         method: 'DELETE',
+        headers: getHeaders(),
+    });
+    return handleResponse(response);
+}
+
+// ============================================
+// Challenges API (Sprint 3)
+// ============================================
+
+/**
+ * Get all challenges (created and received)
+ */
+export async function getChallenges() {
+    const response = await fetch(`${API_BASE}/challenges`, {
+        headers: getHeaders(),
+    });
+    return handleResponse(response);
+}
+
+/**
+ * Create a new challenge
+ */
+export async function createChallenge(data) {
+    const response = await fetch(`${API_BASE}/challenges`, {
+        method: 'POST',
+        headers: getHeaders(),
+        body: JSON.stringify(data),
+    });
+    return handleResponse(response);
+}
+
+/**
+ * Accept a pending challenge
+ */
+export async function acceptChallenge(challengeId) {
+    const response = await fetch(`${API_BASE}/challenges/${challengeId}/accept`, {
+        method: 'POST',
+        headers: getHeaders(),
+    });
+    return handleResponse(response);
+}
+
+/**
+ * Decline a pending challenge
+ */
+export async function declineChallenge(challengeId) {
+    const response = await fetch(`${API_BASE}/challenges/${challengeId}/decline`, {
+        method: 'POST',
+        headers: getHeaders(),
+    });
+    return handleResponse(response);
+}
+
+/**
+ * Get active challenges with current scores
+ */
+export async function getActiveChallenges() {
+    const response = await fetch(`${API_BASE}/challenges/active`, {
         headers: getHeaders(),
     });
     return handleResponse(response);

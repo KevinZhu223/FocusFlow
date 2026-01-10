@@ -5,7 +5,7 @@ import ActivityCard from './ActivityCard';
  * Timeline Component
  * Displays a chronological list of today's activities
  */
-export default function Timeline({ activities, onDeleteActivity, isLoading }) {
+export default function Timeline({ activities, onDeleteActivity, onEditActivity, isLoading }) {
     // Show empty state if no activities
     if (!isLoading && activities.length === 0) {
         return (
@@ -18,7 +18,7 @@ export default function Timeline({ activities, onDeleteActivity, isLoading }) {
                 </h3>
                 <p className="text-sm text-zinc-500 max-w-xs">
                     Start logging your activities above. Type something like
-                    "Studied for 2 hours" or "Went to the gym".
+                    "Studied for 2 hours" or use Quick Actions.
                 </p>
             </div>
         );
@@ -47,6 +47,7 @@ export default function Timeline({ activities, onDeleteActivity, isLoading }) {
                         <ActivityCard
                             activity={activity}
                             onDelete={onDeleteActivity}
+                            onEdit={onEditActivity}
                         />
                     </div>
                 ))}

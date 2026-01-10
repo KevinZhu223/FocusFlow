@@ -1,14 +1,32 @@
 /**
  * FocusFlow - Morning Check-In Component
  * Shows yesterday's summary when user logs in for the first time each day
- * Designed to build reflection and accountability habits
+ * On Mondays, also shows weekly recap from last week
  */
 
 import { useState, useEffect } from 'react';
 import { X, Sun, TrendingUp, TrendingDown, AlertTriangle, Sparkles, Target } from 'lucide-react';
-import { getMorningCheckin } from '../api';
+import { getMorningCheckin, getWeeklyRecap } from '../api';
+import WeeklyRecapModal from './WeeklyRecapModal';
 
 const STORAGE_KEY = 'focusflow_last_checkin';
+const WEEKLY_RECAP_KEY = 'focusflow_last_weekly_recap';
+
+// Helper to get local date string (YYYY-MM-DD) without timezone issues
+function getLocalDateString(date = new Date()) {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+}
+
+// Helper to get week number for tracking
+function getWeekNumber(date = new Date()) {
+    const startOfYear = new Date(date.getFullYear(), 0, 1);
+    const diff = date - startOfYear;
+    const oneWeek = 1000 * 60 * 60 * 24 * 7;
+    return Math.floor(diff / oneWeek);
+}
 
 export default function MorningCheckIn() {
     const [data, setData] = useState(null);
@@ -16,16 +34,47 @@ export default function MorningCheckIn() {
     const [visible, setVisible] = useState(false);
     const [dismissed, setDismissed] = useState(false);
 
+    // Weekly recap state
+    const [weeklyRecapData, setWeeklyRecapData] = useState(null);
+    const [showWeeklyRecap, setShowWeeklyRecap] = useState(false);
+
     useEffect(() => {
         checkAndFetch();
     }, []);
 
     const checkAndFetch = async () => {
+        // Get current LOCAL date and hour (not UTC!)
+        const now = new Date();
+        const today = getLocalDateString(now);
+        const currentHour = now.getHours(); // Local hour (0-23)
+        const dayOfWeek = now.getDay(); // 0 = Sunday, 1 = Monday, ...
+        const isMonday = dayOfWeek === 1;
+        const currentWeek = getWeekNumber(now);
+
+        // Only show morning check-in between 5 AM and 12 PM local time
+        const isMorningHours = currentHour >= 5 && currentHour < 12;
+
         // Check if already shown today
-        const today = new Date().toISOString().split('T')[0];
         const lastCheckin = localStorage.getItem(STORAGE_KEY);
 
-        if (lastCheckin === today) {
+        // Check if weekly recap already shown this week
+        const lastWeeklyRecap = localStorage.getItem(WEEKLY_RECAP_KEY);
+        const weeklyRecapShownThisWeek = lastWeeklyRecap === String(currentWeek);
+
+        // On Monday mornings, show weekly recap first (if not already shown this week)
+        if (isMonday && isMorningHours && !weeklyRecapShownThisWeek) {
+            try {
+                const recapData = await getWeeklyRecap();
+                if (recapData && recapData.total_activities > 0) {
+                    setWeeklyRecapData(recapData);
+                    setShowWeeklyRecap(true);
+                }
+            } catch (err) {
+                console.error('Failed to fetch weekly recap:', err);
+            }
+        }
+
+        if (lastCheckin === today || !isMorningHours) {
             setLoading(false);
             return;
         }
@@ -46,12 +95,30 @@ export default function MorningCheckIn() {
     };
 
     const handleDismiss = () => {
-        // Mark as shown for today
-        const today = new Date().toISOString().split('T')[0];
+        // Mark as shown for today using LOCAL date
+        const today = getLocalDateString();
         localStorage.setItem(STORAGE_KEY, today);
         setDismissed(true);
         setTimeout(() => setVisible(false), 300);
     };
+
+    const handleWeeklyRecapDismiss = () => {
+        // Mark weekly recap as shown for this week
+        const currentWeek = getWeekNumber();
+        localStorage.setItem(WEEKLY_RECAP_KEY, String(currentWeek));
+        setShowWeeklyRecap(false);
+    };
+
+    // Show weekly recap modal if active
+    if (showWeeklyRecap) {
+        return (
+            <WeeklyRecapModal
+                isOpen={true}
+                onClose={handleWeeklyRecapDismiss}
+                recapData={weeklyRecapData}
+            />
+        );
+    }
 
     if (loading || !visible || !data) {
         return null;
@@ -128,12 +195,12 @@ export default function MorningCheckIn() {
                     <div className="glass-card p-4">
                         <div className="flex items-start gap-3">
                             <div className={`p-2 rounded-lg shrink-0 ${data.mood === 'positive' ? 'bg-emerald-500/20' :
-                                    data.mood === 'warning' ? 'bg-red-500/20' :
-                                        'bg-amber-500/20'
+                                data.mood === 'warning' ? 'bg-red-500/20' :
+                                    'bg-amber-500/20'
                                 }`}>
                                 <MoodIcon className={`w-4 h-4 ${data.mood === 'positive' ? 'text-emerald-400' :
-                                        data.mood === 'warning' ? 'text-red-400' :
-                                            'text-amber-400'
+                                    data.mood === 'warning' ? 'text-red-400' :
+                                        'text-amber-400'
                                     }`} />
                             </div>
                             <p className="text-sm text-zinc-300 leading-relaxed">{data.insight}</p>

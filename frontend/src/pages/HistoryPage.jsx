@@ -22,7 +22,249 @@ const getDateColor = (score) => {
     return 'red';  // Negative (unproductive)
 };
 
+// Category colors matching the app's design system
+const CATEGORY_COLORS = {
+    Career: { bg: '#6366f1', text: '#a5b4fc' },   // Indigo
+    Health: { bg: '#10b981', text: '#6ee7b7' },   // Emerald
+    Leisure: { bg: '#8b5cf6', text: '#c4b5fd' },  // Violet
+    Chores: { bg: '#64748b', text: '#94a3b8' },   // Slate
+    Social: { bg: '#f59e0b', text: '#fcd34d' }    // Amber
+};
+
+// Get hour range for display (e.g., "9 AM - 6 PM")
+function getActiveHoursRange(activities) {
+    if (!activities.length) return null;
+
+    const hours = activities
+        .filter(a => a.timestamp)
+        .map(a => new Date(a.timestamp).getHours());
+
+    if (!hours.length) return null;
+
+    const minHour = Math.min(...hours);
+    const maxHour = Math.max(...hours);
+
+    const formatHour = (h) => {
+        if (h === 0) return '12 AM';
+        if (h < 12) return `${h} AM`;
+        if (h === 12) return '12 PM';
+        return `${h - 12} PM`;
+    };
+
+    return `${formatHour(minHour)} - ${formatHour(maxHour)}`;
+}
+
+// Build hourly breakdown for the timeline chart
+function buildHourlyData(activities) {
+    const hourlyData = Array(24).fill(null).map((_, hour) => ({
+        hour,
+        activities: [],
+        totalMinutes: 0,
+        categories: {}
+    }));
+
+    activities.forEach(activity => {
+        if (!activity.timestamp) return;
+        const hour = new Date(activity.timestamp).getHours();
+        const duration = activity.duration_minutes || 30;
+        const category = activity.category || 'Career';
+
+        hourlyData[hour].activities.push(activity);
+        hourlyData[hour].totalMinutes += duration;
+        hourlyData[hour].categories[category] =
+            (hourlyData[hour].categories[category] || 0) + duration;
+    });
+
+    return hourlyData;
+}
+
+// Build category breakdown
+function buildCategoryBreakdown(activities) {
+    const breakdown = {};
+    let totalMinutes = 0;
+
+    activities.forEach(activity => {
+        const category = activity.category || 'Career';
+        const duration = activity.duration_minutes || 30;
+
+        if (!breakdown[category]) {
+            breakdown[category] = { minutes: 0, count: 0, score: 0 };
+        }
+        breakdown[category].minutes += duration;
+        breakdown[category].count += 1;
+        breakdown[category].score += activity.productivity_score || 0;
+        totalMinutes += duration;
+    });
+
+    // Calculate percentages
+    Object.keys(breakdown).forEach(cat => {
+        breakdown[cat].percentage = totalMinutes > 0
+            ? Math.round((breakdown[cat].minutes / totalMinutes) * 100)
+            : 0;
+    });
+
+    return { breakdown, totalMinutes };
+}
+
+// Activity Time Distribution Bar (simpler visualization that doesn't rely on timestamps)
+function TimeDistributionBar({ activities }) {
+    const { breakdown, totalMinutes } = useMemo(() =>
+        buildCategoryBreakdown(activities), [activities]
+    );
+
+    const sortedCategories = Object.entries(breakdown)
+        .sort((a, b) => b[1].minutes - a[1].minutes);
+
+    if (sortedCategories.length === 0 || totalMinutes === 0) {
+        return (
+            <div className="h-8 bg-zinc-800/50 rounded-lg flex items-center justify-center text-xs text-zinc-500">
+                No activity data
+            </div>
+        );
+    }
+
+    return (
+        <div className="space-y-2">
+            {/* Stacked horizontal bar */}
+            <div className="h-10 bg-zinc-800 rounded-lg overflow-hidden flex">
+                {sortedCategories.map(([category, data]) => (
+                    <div
+                        key={category}
+                        className="h-full flex items-center justify-center text-xs font-medium transition-all hover:opacity-80 relative group"
+                        style={{
+                            width: `${data.percentage}%`,
+                            backgroundColor: CATEGORY_COLORS[category]?.bg || '#6366f1',
+                            minWidth: data.percentage > 5 ? 'auto' : '8px'
+                        }}
+                    >
+                        {data.percentage >= 15 && (
+                            <span className="text-white/90 truncate px-1">
+                                {category}
+                            </span>
+                        )}
+
+                        {/* Tooltip */}
+                        <div className="absolute -top-12 left-1/2 -translate-x-1/2
+                                      bg-zinc-900 border border-zinc-700 rounded-lg px-2 py-1
+                                      opacity-0 group-hover:opacity-100 transition-opacity
+                                      pointer-events-none whitespace-nowrap z-20 text-xs">
+                            <div className="font-medium" style={{ color: CATEGORY_COLORS[category]?.text }}>
+                                {category}
+                            </div>
+                            <div className="text-zinc-400">
+                                {Math.floor(data.minutes / 60)}h {data.minutes % 60}m ({data.percentage}%)
+                            </div>
+                        </div>
+                    </div>
+                ))}
+            </div>
+
+            {/* Legend */}
+            <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
+                {sortedCategories.map(([category, data]) => (
+                    <div key={category} className="flex items-center gap-1.5">
+                        <div
+                            className="w-2.5 h-2.5 rounded-sm"
+                            style={{ backgroundColor: CATEGORY_COLORS[category]?.bg }}
+                        />
+                        <span className="text-zinc-400">{category}</span>
+                        <span className="text-zinc-600">{data.percentage}%</span>
+                    </div>
+                ))}
+            </div>
+        </div>
+    );
+}
+
+// Category Breakdown Component (horizontal bars)
+function CategoryBreakdown({ activities }) {
+    const { breakdown, totalMinutes } = useMemo(() =>
+        buildCategoryBreakdown(activities), [activities]
+    );
+
+    const sortedCategories = Object.entries(breakdown)
+        .sort((a, b) => b[1].minutes - a[1].minutes);
+
+    if (sortedCategories.length === 0) return null;
+
+    return (
+        <div className="space-y-3">
+            {sortedCategories.map(([category, data]) => (
+                <div key={category} className="space-y-1">
+                    <div className="flex items-center justify-between text-sm">
+                        <div className="flex items-center gap-2">
+                            <div
+                                className="w-3 h-3 rounded-sm"
+                                style={{ backgroundColor: CATEGORY_COLORS[category]?.bg || '#6366f1' }}
+                            />
+                            <span className="text-zinc-300">{category}</span>
+                        </div>
+                        <div className="text-zinc-400">
+                            {Math.floor(data.minutes / 60)}h {data.minutes % 60}m
+                            <span className="text-zinc-600 ml-2">({data.percentage}%)</span>
+                        </div>
+                    </div>
+                    <div className="h-2 bg-zinc-800 rounded-full overflow-hidden">
+                        <div
+                            className="h-full rounded-full transition-all"
+                            style={{
+                                width: `${data.percentage}%`,
+                                backgroundColor: CATEGORY_COLORS[category]?.bg || '#6366f1'
+                            }}
+                        />
+                    </div>
+                </div>
+            ))}
+        </div>
+    );
+}
+
+// Summary Statistics Grid
+function SummaryStats({ activities, dailyScore }) {
+    const stats = useMemo(() => {
+        const totalMinutes = activities.reduce((sum, a) => sum + (a.duration_minutes || 30), 0);
+        const focusSessions = activities.filter(a => a.is_focus_session).length;
+        const productiveMinutes = activities
+            .filter(a => a.productivity_score > 0)
+            .reduce((sum, a) => sum + (a.duration_minutes || 30), 0);
+        const leisureMinutes = activities
+            .filter(a => a.category === 'Leisure')
+            .reduce((sum, a) => sum + (a.duration_minutes || 30), 0);
+
+        return {
+            totalHours: (totalMinutes / 60).toFixed(1),
+            focusSessions,
+            productiveHours: (productiveMinutes / 60).toFixed(1),
+            leisureHours: (leisureMinutes / 60).toFixed(1),
+            activityCount: activities.length
+        };
+    }, [activities]);
+
+    return (
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div className="bg-zinc-800/50 rounded-xl p-3 text-center">
+                <div className="text-2xl font-bold text-zinc-100">{stats.totalHours}</div>
+                <div className="text-xs text-zinc-500">Hours Logged</div>
+            </div>
+            <div className="bg-zinc-800/50 rounded-xl p-3 text-center">
+                <div className="text-2xl font-bold text-emerald-400">{stats.productiveHours}</div>
+                <div className="text-xs text-zinc-500">Productive</div>
+            </div>
+            <div className="bg-zinc-800/50 rounded-xl p-3 text-center">
+                <div className="text-2xl font-bold text-violet-400">{stats.leisureHours}</div>
+                <div className="text-xs text-zinc-500">Leisure</div>
+            </div>
+            <div className="bg-zinc-800/50 rounded-xl p-3 text-center">
+                <div className="text-2xl font-bold text-indigo-400">{stats.focusSessions}</div>
+                <div className="text-xs text-zinc-500">Focus Sessions</div>
+            </div>
+        </div>
+    );
+}
+
 function DayReviewModal({ date, activities, dailyScore, onClose }) {
+    const [showAllActivities, setShowAllActivities] = useState(false);
+
     const formattedDate = date.toLocaleDateString('en-US', {
         weekday: 'long',
         year: 'numeric',
@@ -35,15 +277,25 @@ function DayReviewModal({ date, activities, dailyScore, onClose }) {
         return (total / 60).toFixed(1);
     }, [activities]);
 
+    const activeHoursRange = useMemo(() => getActiveHoursRange(activities), [activities]);
+    const displayedActivities = showAllActivities ? activities : activities.slice(0, 5);
+
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-            <div className="bg-zinc-900 border border-zinc-800 rounded-2xl max-w-2xl w-full max-h-[80vh] overflow-hidden">
+        <div
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm"
+            onClick={onClose}
+        >
+            <div
+                className="bg-zinc-900 border border-zinc-800 rounded-2xl max-w-2xl w-full max-h-[90vh] overflow-hidden"
+                onClick={e => e.stopPropagation()}
+            >
                 {/* Header */}
                 <div className="flex items-center justify-between p-5 border-b border-zinc-800">
                     <div>
                         <h2 className="text-xl font-semibold text-zinc-100">{formattedDate}</h2>
                         <p className="text-sm text-zinc-500 mt-1">
-                            {activities.length} activities • {totalHours} hours logged
+                            {activities.length} activities • {totalHours} hours
+                            {activeHoursRange && ` • ${activeHoursRange}`}
                         </p>
                     </div>
                     <button
@@ -54,62 +306,104 @@ function DayReviewModal({ date, activities, dailyScore, onClose }) {
                     </button>
                 </div>
 
-                {/* Daily Score */}
-                <div className="p-5 border-b border-zinc-800">
-                    <div className="flex items-center gap-4">
-                        <div className={`w-16 h-16 rounded-xl flex items-center justify-center text-2xl font-bold
-                                      ${dailyScore >= 50 ? 'bg-emerald-500/20 text-emerald-400' :
-                                dailyScore >= 20 ? 'bg-yellow-500/20 text-yellow-400' :
-                                    dailyScore > 0 ? 'bg-orange-500/20 text-orange-400' :
-                                        'bg-red-500/20 text-red-400'}`}>
-                            {dailyScore?.toFixed(0) || 0}
-                        </div>
-                        <div>
-                            <div className="text-lg font-medium text-zinc-100">Daily Productivity Score</div>
-                            <div className="text-sm text-zinc-500">
-                                {dailyScore >= 50 ? 'Excellent day!' :
-                                    dailyScore >= 20 ? 'Good progress' :
-                                        dailyScore > 0 ? 'Room for improvement' :
-                                            'Unproductive day'}
+                {/* Scrollable Content */}
+                <div className="overflow-y-auto overflow-x-hidden max-h-[calc(90vh-100px)]">
+                    {/* Daily Score Hero */}
+                    <div className="p-5 border-b border-zinc-800 bg-gradient-to-r from-zinc-800/30 to-zinc-900">
+                        <div className="flex items-center gap-4">
+                            <div className={`w-20 h-20 rounded-2xl flex items-center justify-center text-2xl font-bold
+                                          ${dailyScore >= 50 ? 'bg-emerald-500/20 text-emerald-400' :
+                                    dailyScore >= 20 ? 'bg-yellow-500/20 text-yellow-400' :
+                                        dailyScore > 0 ? 'bg-orange-500/20 text-orange-400' :
+                                            'bg-red-500/20 text-red-400'}`}>
+                                {dailyScore != null && dailyScore !== 0
+                                    ? (Math.abs(dailyScore) >= 10 ? dailyScore.toFixed(0) : dailyScore.toFixed(1))
+                                    : '0'}
+                            </div>
+                            <div>
+                                <div className="text-lg font-semibold text-zinc-100">Daily Score</div>
+                                <div className="text-sm text-zinc-500">
+                                    {dailyScore >= 50 ? '🎉 Excellent day! You crushed it.' :
+                                        dailyScore >= 20 ? '👍 Good progress today.' :
+                                            dailyScore > 0 ? '📈 Room for improvement.' :
+                                                '⚠️ Heavy on leisure today.'}
+                                </div>
                             </div>
                         </div>
                     </div>
-                </div>
 
-                {/* Activities List */}
-                <div className="p-5 overflow-y-auto max-h-[400px]">
-                    <h3 className="text-sm font-medium text-zinc-400 mb-3">Activities</h3>
                     {activities.length > 0 ? (
-                        <div className="space-y-3">
-                            {activities.map(activity => (
-                                <div
-                                    key={activity.id}
-                                    className="flex items-center gap-3 p-3 rounded-xl bg-zinc-800/50 border border-zinc-700/50"
-                                >
-                                    <Activity className="w-5 h-5 text-zinc-500 shrink-0" />
-                                    <div className="flex-1 min-w-0">
-                                        <div className="font-medium text-zinc-200 truncate">
-                                            {activity.activity_name}
+                        <>
+                            {/* Summary Statistics */}
+                            <div className="p-5 border-b border-zinc-800">
+                                <h3 className="text-sm font-medium text-zinc-400 mb-3 flex items-center gap-2">
+                                    <TrendingUp className="w-4 h-4" />
+                                    Summary
+                                </h3>
+                                <SummaryStats activities={activities} dailyScore={dailyScore} />
+                            </div>
+
+                            {/* Time Distribution */}
+                            <div className="p-5 border-b border-zinc-800">
+                                <h3 className="text-sm font-medium text-zinc-400 mb-3 flex items-center gap-2">
+                                    <Clock className="w-4 h-4" />
+                                    Time Distribution
+                                </h3>
+                                <TimeDistributionBar activities={activities} />
+                            </div>
+
+                            {/* Activities List */}
+                            <div className="p-5">
+                                <h3 className="text-sm font-medium text-zinc-400 mb-3">
+                                    Activities ({activities.length})
+                                </h3>
+                                <div className="space-y-2">
+                                    {displayedActivities.map(activity => (
+                                        <div
+                                            key={activity.id}
+                                            className="flex items-center gap-3 p-3 rounded-xl bg-zinc-800/50 border border-zinc-700/50"
+                                        >
+                                            <div
+                                                className="w-1 h-10 rounded-full"
+                                                style={{ backgroundColor: CATEGORY_COLORS[activity.category]?.bg || '#6366f1' }}
+                                            />
+                                            <div className="flex-1 min-w-0">
+                                                <div className="font-medium text-zinc-200 truncate">
+                                                    {activity.activity_name}
+                                                </div>
+                                                <div className="text-sm text-zinc-500 flex items-center gap-3 mt-0.5">
+                                                    <span>{activity.category}</span>
+                                                    <span className="flex items-center gap-1">
+                                                        <Clock className="w-3 h-3" />
+                                                        {activity.duration_minutes || 30}m
+                                                    </span>
+                                                </div>
+                                            </div>
+                                            <div className={`text-sm font-medium px-2 py-1 rounded-lg
+                                                           ${activity.productivity_score >= 0 ?
+                                                    'bg-emerald-500/20 text-emerald-400' :
+                                                    'bg-red-500/20 text-red-400'}`}>
+                                                {activity.productivity_score >= 0 ? '+' : ''}{activity.productivity_score?.toFixed(1)}
+                                            </div>
                                         </div>
-                                        <div className="text-sm text-zinc-500 flex items-center gap-3 mt-0.5">
-                                            <span>{activity.category}</span>
-                                            <span className="flex items-center gap-1">
-                                                <Clock className="w-3 h-3" />
-                                                {activity.duration_minutes || 30}m
-                                            </span>
-                                        </div>
-                                    </div>
-                                    <div className={`text-sm font-medium px-2 py-1 rounded-lg
-                                                   ${activity.productivity_score >= 0 ?
-                                            'bg-emerald-500/20 text-emerald-400' :
-                                            'bg-red-500/20 text-red-400'}`}>
-                                        {activity.productivity_score >= 0 ? '+' : ''}{activity.productivity_score?.toFixed(1)}
-                                    </div>
+                                    ))}
                                 </div>
-                            ))}
-                        </div>
+
+                                {activities.length > 5 && (
+                                    <button
+                                        onClick={() => setShowAllActivities(!showAllActivities)}
+                                        className="w-full mt-3 py-2 text-sm text-indigo-400 hover:text-indigo-300 
+                                                 bg-indigo-500/10 hover:bg-indigo-500/20 rounded-lg transition-colors"
+                                    >
+                                        {showAllActivities
+                                            ? 'Show Less'
+                                            : `Show All ${activities.length} Activities`}
+                                    </button>
+                                )}
+                            </div>
+                        </>
                     ) : (
-                        <div className="text-center py-8 text-zinc-500">
+                        <div className="text-center py-12 text-zinc-500">
                             <Activity className="w-12 h-12 mx-auto mb-3 opacity-30" />
                             <p>No activities logged this day</p>
                         </div>

@@ -515,6 +515,97 @@ def check_goal_status(session: SQLSession, user, activity) -> Dict[str, Any]:
 
 
 # ============================================================================
+# STREAKS SYSTEM
+# ============================================================================
+
+def calculate_streak(session: SQLSession, user_id: int, tz_offset: int = 0) -> Dict[str, Any]:
+    """
+    Calculate the user's current activity streak.
+    A streak is consecutive days with at least one logged activity.
+    
+    Args:
+        session: Database session
+        user_id: User's ID
+        tz_offset: Timezone offset in minutes from UTC (e.g., -300 for EST)
+        
+    Returns:
+        Dict with current_streak, longest_streak, and streak details
+    """
+    from models import ActivityLog
+    
+    # Get all user activities ordered by date
+    activities = session.query(ActivityLog).filter(
+        ActivityLog.user_id == user_id
+    ).order_by(ActivityLog.timestamp.desc()).all()
+    
+    if not activities:
+        return {
+            "current_streak": 0,
+            "longest_streak": 0,
+            "streak_active": False,
+            "last_activity_date": None
+        }
+    
+    # Convert UTC timestamps to local dates using timezone offset
+    # tz_offset is in minutes (e.g., -300 for EST = UTC-5, so we SUBTRACT 300 minutes from UTC to get local)
+    def to_local_date(utc_timestamp):
+        local_time = utc_timestamp - timedelta(minutes=tz_offset)
+        return local_time.date()
+    
+    # Get unique LOCAL dates with activities
+    dates_with_activities = sorted(set(to_local_date(a.timestamp) for a in activities), reverse=True)
+    
+    if not dates_with_activities:
+        return {
+            "current_streak": 0,
+            "longest_streak": 0,
+            "streak_active": False,
+            "last_activity_date": None
+        }
+    
+    # Calculate "today" in user's local timezone
+    utc_now = datetime.utcnow()
+    local_now = utc_now - timedelta(minutes=tz_offset)
+    today = local_now.date()
+    yesterday = today - timedelta(days=1)
+    
+    # Check if streak is active (activity today or yesterday in LOCAL time)
+    most_recent = dates_with_activities[0]
+    streak_active = most_recent >= yesterday
+    
+    # Calculate current streak
+    current_streak = 0
+    check_date = today if most_recent == today else (yesterday if most_recent == yesterday else None)
+    
+    if check_date:
+        for date in dates_with_activities:
+            if date == check_date:
+                current_streak += 1
+                check_date -= timedelta(days=1)
+            elif date < check_date:
+                break
+    
+    # Calculate longest streak ever
+    longest_streak = 0
+    streak_count = 1
+    sorted_dates = sorted(dates_with_activities)
+    
+    for i in range(1, len(sorted_dates)):
+        if sorted_dates[i] - sorted_dates[i-1] == timedelta(days=1):
+            streak_count += 1
+        else:
+            longest_streak = max(longest_streak, streak_count)
+            streak_count = 1
+    longest_streak = max(longest_streak, streak_count)
+    
+    return {
+        "current_streak": current_streak,
+        "longest_streak": longest_streak,
+        "streak_active": streak_active,
+        "last_activity_date": most_recent.isoformat() if most_recent else None
+    }
+
+# ============================================================================
 # COLLECTIBLES / LOOT SYSTEM (Phase 4)
 # ============================================================================
 

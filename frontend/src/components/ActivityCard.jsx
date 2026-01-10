@@ -1,4 +1,5 @@
-import { Clock, Trash2, TrendingUp, TrendingDown, Minus } from 'lucide-react';
+import { useState } from 'react';
+import { Clock, Trash2, TrendingUp, TrendingDown, Minus, Pencil, Check, X } from 'lucide-react';
 
 /**
  * Category color mapping
@@ -35,6 +36,8 @@ const CATEGORY_COLORS = {
         badge: 'bg-pink-500/20 text-pink-300'
     }
 };
+
+const CATEGORIES = ['Career', 'Health', 'Leisure', 'Chores', 'Social'];
 
 /**
  * Format duration in minutes to a readable string
@@ -88,12 +91,142 @@ function getScoreIndicator(score) {
 /**
  * ActivityCard Component
  * Displays a single activity with category color-coding and details
+ * Now supports inline editing
  */
-export default function ActivityCard({ activity, onDelete }) {
-    const colors = CATEGORY_COLORS[activity.category] || CATEGORY_COLORS.Career;
+export default function ActivityCard({ activity, onDelete, onEdit }) {
+    const [isEditing, setIsEditing] = useState(false);
+    const [editName, setEditName] = useState(activity.activity_name);
+    const [editDuration, setEditDuration] = useState(activity.duration_minutes || 30);
+    const [editCategory, setEditCategory] = useState(activity.category);
+    const [isSaving, setIsSaving] = useState(false);
+
+    const colors = CATEGORY_COLORS[isEditing ? editCategory : activity.category] || CATEGORY_COLORS.Career;
     const scoreIndicator = getScoreIndicator(activity.productivity_score);
     const ScoreIcon = scoreIndicator.Icon;
 
+    const handleStartEdit = () => {
+        setEditName(activity.activity_name);
+        setEditDuration(activity.duration_minutes || 30);
+        setEditCategory(activity.category);
+        setIsEditing(true);
+    };
+
+    const handleCancelEdit = () => {
+        setIsEditing(false);
+        setEditName(activity.activity_name);
+        setEditDuration(activity.duration_minutes || 30);
+        setEditCategory(activity.category);
+    };
+
+    const handleSaveEdit = async () => {
+        if (!editName.trim() || isSaving) return;
+
+        setIsSaving(true);
+        try {
+            await onEdit(activity.id, {
+                activity_name: editName.trim(),
+                duration_minutes: parseInt(editDuration) || 30,
+                category: editCategory
+            });
+            setIsEditing(false);
+        } catch (err) {
+            console.error('Failed to update activity:', err);
+        } finally {
+            setIsSaving(false);
+        }
+    };
+
+    const handleKeyDown = (e) => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            handleSaveEdit();
+        } else if (e.key === 'Escape') {
+            handleCancelEdit();
+        }
+    };
+
+    // Edit mode UI
+    if (isEditing) {
+        return (
+            <div
+                className={`group relative rounded-lg border-l-4 ${colors.border} 
+                    bg-zinc-900/80 border border-indigo-500/50 ring-2 ring-indigo-500/20
+                    transition-all duration-200`}
+            >
+                <div className="p-4 space-y-3">
+                    {/* Activity Name Input */}
+                    <input
+                        type="text"
+                        value={editName}
+                        onChange={(e) => setEditName(e.target.value)}
+                        onKeyDown={handleKeyDown}
+                        className="w-full px-3 py-2 bg-zinc-800/80 border border-zinc-700 rounded-lg
+                                 text-zinc-100 placeholder-zinc-500 focus:outline-none 
+                                 focus:border-indigo-500/50 focus:ring-1 focus:ring-indigo-500/20"
+                        placeholder="Activity name"
+                        autoFocus
+                    />
+
+                    {/* Duration and Category Row */}
+                    <div className="flex items-center gap-3">
+                        {/* Duration */}
+                        <div className="flex items-center gap-2">
+                            <Clock className="w-4 h-4 text-zinc-500" />
+                            <input
+                                type="number"
+                                value={editDuration}
+                                onChange={(e) => setEditDuration(e.target.value)}
+                                onKeyDown={handleKeyDown}
+                                min="1"
+                                max="1440"
+                                className="w-20 px-2 py-1.5 bg-zinc-800/80 border border-zinc-700 rounded-lg
+                                         text-zinc-100 text-sm focus:outline-none 
+                                         focus:border-indigo-500/50 text-center"
+                            />
+                            <span className="text-sm text-zinc-500">min</span>
+                        </div>
+
+                        {/* Category Dropdown */}
+                        <select
+                            value={editCategory}
+                            onChange={(e) => setEditCategory(e.target.value)}
+                            className="px-3 py-1.5 bg-zinc-800/80 border border-zinc-700 rounded-lg
+                                     text-zinc-100 text-sm focus:outline-none focus:border-indigo-500/50
+                                     cursor-pointer"
+                        >
+                            {CATEGORIES.map(cat => (
+                                <option key={cat} value={cat}>{cat}</option>
+                            ))}
+                        </select>
+
+                        {/* Action Buttons */}
+                        <div className="flex items-center gap-1 ml-auto">
+                            <button
+                                onClick={handleSaveEdit}
+                                disabled={isSaving || !editName.trim()}
+                                className="p-1.5 rounded-md bg-emerald-500/20 text-emerald-400 
+                                         hover:bg-emerald-500/30 disabled:opacity-50 
+                                         disabled:cursor-not-allowed transition-colors"
+                                aria-label="Save changes"
+                            >
+                                <Check className="w-4 h-4" />
+                            </button>
+                            <button
+                                onClick={handleCancelEdit}
+                                className="p-1.5 rounded-md text-zinc-400 hover:text-red-400 
+                                         hover:bg-red-500/10 transition-colors"
+                                aria-label="Cancel edit"
+                            >
+                                <X className="w-4 h-4" />
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
+    // Normal display mode
     return (
         <div
             className={`group relative rounded-lg border-l-4 ${colors.border} 
@@ -116,16 +249,30 @@ export default function ActivityCard({ activity, onDelete }) {
                         </p>
                     </div>
 
-                    {/* Delete Button */}
-                    <button
-                        onClick={() => onDelete(activity.id)}
-                        className="opacity-0 group-hover:opacity-100 p-1.5 rounded-md
-                     text-zinc-500 hover:text-red-400 hover:bg-red-500/10
-                     transition-all duration-200"
-                        aria-label="Delete activity"
-                    >
-                        <Trash2 className="w-4 h-4" />
-                    </button>
+                    {/* Action Buttons */}
+                    <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                        {/* Edit Button */}
+                        {onEdit && (
+                            <button
+                                onClick={handleStartEdit}
+                                className="p-1.5 rounded-md text-zinc-500 hover:text-indigo-400 
+                                         hover:bg-indigo-500/10 transition-all duration-200"
+                                aria-label="Edit activity"
+                            >
+                                <Pencil className="w-4 h-4" />
+                            </button>
+                        )}
+
+                        {/* Delete Button */}
+                        <button
+                            onClick={() => onDelete(activity.id)}
+                            className="p-1.5 rounded-md text-zinc-500 hover:text-red-400 
+                                     hover:bg-red-500/10 transition-all duration-200"
+                            aria-label="Delete activity"
+                        >
+                            <Trash2 className="w-4 h-4" />
+                        </button>
+                    </div>
                 </div>
 
                 {/* Details Row */}

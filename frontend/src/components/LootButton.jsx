@@ -111,16 +111,6 @@ function SpinnerModal({ wonItem, onComplete }) {
             // Calculate exact scroll distance to center the winner
             const finalOffset = winnerCenter - trackCenter;
 
-            console.log('Spinner DOM Debug:', {
-                trackWidth,
-                trackCenter,
-                winnerLeft,
-                winnerWidth,
-                winnerCenter,
-                finalOffset,
-                wonItem: wonItem.name
-            });
-
             const startTime = Date.now();
             const duration = 4000; // 4 seconds
 

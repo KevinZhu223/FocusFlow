@@ -23,6 +23,7 @@ from gamification import (
     process_activity_gamification, get_level_progress, calculate_level,
     open_chest, check_chest_eligibility
 )
+from oracle import get_oracle_insight, get_all_oracle_insights
 
 # Load environment variables
 load_dotenv()
@@ -269,6 +270,72 @@ def delete_activity(activity_id):
         session.close()
 
 
+@app.route('/api/activities/<int:activity_id>', methods=['PUT'])
+def update_activity(activity_id):
+    """
+    Update an activity by ID.
+    Allows editing activity_name, duration_minutes, and category.
+    Recalculates productivity_score on changes.
+    """
+    data = request.get_json()
+    
+    session = Session()
+    try:
+        user = get_current_user(session)
+        
+        activity = session.query(ActivityLog).filter(
+            ActivityLog.id == activity_id,
+            ActivityLog.user_id == user.id
+        ).first()
+        
+        if not activity:
+            return jsonify({"error": "Activity not found"}), 404
+        
+        # Track if we need to recalculate score
+        needs_score_update = False
+        
+        # Update fields if provided
+        if 'activity_name' in data:
+            activity.activity_name = data['activity_name'].strip()
+            activity.raw_input = data['activity_name'].strip()  # Also update raw input
+        
+        if 'duration_minutes' in data:
+            new_duration = int(data['duration_minutes'])
+            if new_duration != activity.duration_minutes:
+                activity.duration_minutes = max(1, min(1440, new_duration))
+                needs_score_update = True
+        
+        if 'category' in data:
+            valid_categories = ['Career', 'Health', 'Leisure', 'Chores', 'Social']
+            if data['category'] in valid_categories:
+                from models import CategoryEnum
+                if data['category'] != activity.category.value:
+                    activity.category = CategoryEnum(data['category'])
+                    needs_score_update = True
+        
+        # Recalculate productivity score if category or duration changed
+        if needs_score_update:
+            from nlp_parser import calculate_weighted_score
+            activity.productivity_score = calculate_weighted_score(
+                category=activity.category,
+                duration_minutes=activity.duration_minutes,
+                is_focus_session=bool(activity.is_focus_session)
+            )
+        
+        session.commit()
+        
+        return jsonify({
+            "success": True,
+            "activity": activity.to_dict()
+        })
+        
+    except Exception as e:
+        session.rollback()
+        return jsonify({"error": str(e)}), 500
+    finally:
+        session.close()
+
+
 # ============================================================================
 # DASHBOARD
 # ============================================================================
@@ -324,6 +391,10 @@ def get_dashboard():
         # Get level progress
         level_info = get_level_progress(user.xp)
         
+        # Get streak info (pass timezone offset for accurate local date calculation)
+        from gamification import calculate_streak
+        streak_info = calculate_streak(session, user.id, tz_offset)
+        
         return jsonify({
             "date": target_date.isoformat(),
             "daily_score": round(daily_score, 2),
@@ -332,7 +403,116 @@ def get_dashboard():
             "category_breakdown": category_breakdown,
             "level": level_info["level"],
             "xp": user.xp,
-            "level_progress": level_info
+            "level_progress": level_info,
+            "streak": streak_info
+        })
+        
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        session.close()
+
+
+# ============================================================================
+# WEEKLY RECAP
+# ============================================================================
+
+@app.route('/api/weekly-recap', methods=['GET'])
+def get_weekly_recap():
+    """Get last week's recap data for the weekly summary modal."""
+    session = Session()
+    try:
+        user = get_current_user(session)
+        
+        # Calculate last week's date range
+        today = datetime.utcnow().date()
+        # Get Monday of this week
+        this_monday = today - timedelta(days=today.weekday())
+        # Last week = Monday to Sunday before this week
+        last_week_end = this_monday - timedelta(days=1)  # Last Sunday
+        last_week_start = last_week_end - timedelta(days=6)  # Last Monday
+        
+        # Previous week for trend comparison
+        prev_week_end = last_week_start - timedelta(days=1)
+        prev_week_start = prev_week_end - timedelta(days=6)
+        
+        # Get last week's activities
+        start_datetime = datetime.combine(last_week_start, datetime.min.time())
+        end_datetime = datetime.combine(last_week_end, datetime.max.time())
+        
+        activities = session.query(ActivityLog).filter(
+            ActivityLog.user_id == user.id,
+            ActivityLog.timestamp >= start_datetime,
+            ActivityLog.timestamp <= end_datetime
+        ).all()
+        
+        # Get previous week's activities for trend
+        prev_start_datetime = datetime.combine(prev_week_start, datetime.min.time())
+        prev_end_datetime = datetime.combine(prev_week_end, datetime.max.time())
+        
+        prev_activities = session.query(ActivityLog).filter(
+            ActivityLog.user_id == user.id,
+            ActivityLog.timestamp >= prev_start_datetime,
+            ActivityLog.timestamp <= prev_end_datetime
+        ).all()
+        
+        # Calculate stats
+        total_activities = len(activities)
+        total_score = sum(a.productivity_score for a in activities)
+        total_minutes = sum(a.duration_minutes or 30 for a in activities)
+        total_hours = round(total_minutes / 60, 1)
+        
+        prev_total_score = sum(a.productivity_score for a in prev_activities)
+        
+        # Trend calculation
+        if prev_total_score > 0:
+            trend_vs_previous = ((total_score - prev_total_score) / prev_total_score) * 100
+        else:
+            trend_vs_previous = 100 if total_score > 0 else 0
+        
+        # Category breakdown
+        category_breakdown = {}
+        for category in CategoryEnum:
+            category_activities = [a for a in activities if a.category == category]
+            cat_minutes = sum(a.duration_minutes or 30 for a in category_activities)
+            if cat_minutes > 0:
+                category_breakdown[category.value] = {
+                    "minutes": cat_minutes,
+                    "count": len(category_activities)
+                }
+        
+        # Find top day
+        daily_scores = {}
+        for activity in activities:
+            day = activity.timestamp.date().isoformat()
+            daily_scores[day] = daily_scores.get(day, 0) + activity.productivity_score
+        
+        top_day = None
+        if daily_scores:
+            best_day = max(daily_scores.items(), key=lambda x: x[1])
+            top_day = {"date": best_day[0], "score": best_day[1]}
+        
+        # Calculate max streak during the week
+        from gamification import calculate_streak
+        streak_info = calculate_streak(session, user.id)
+        
+        # Get badges earned during the week
+        badges_earned = []
+        for ub in user.badges:
+            if ub.earned_at and start_datetime <= ub.earned_at <= end_datetime:
+                badges_earned.append(ub.badge.to_dict())
+        
+        return jsonify({
+            "week_start": last_week_start.isoformat(),
+            "week_end": last_week_end.isoformat(),
+            "total_activities": total_activities,
+            "total_score": round(total_score, 1),
+            "total_hours": total_hours,
+            "category_breakdown": category_breakdown,
+            "trend_vs_previous": round(trend_vs_previous, 1),
+            "top_day": top_day,
+            "badges_earned": badges_earned,
+            "streak_max": streak_info.get("longest_streak", 0)
         })
         
     except Exception as e:
@@ -384,6 +564,52 @@ def get_daily_insights():
         })
         
     except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        session.close()
+
+
+@app.route('/api/oracle', methods=['GET'])
+def get_oracle():
+    """
+    Get AI-powered Oracle insight based on user's activity history.
+    
+    Query params:
+        - full: If 'true', return all insights. Otherwise return single top insight.
+    """
+    full_mode = request.args.get('full', 'false').lower() == 'true'
+    
+    session = Session()
+    try:
+        user = get_current_user(session)
+        
+        # Fetch all user activities
+        activities = session.query(ActivityLog).filter(
+            ActivityLog.user_id == user.id
+        ).order_by(ActivityLog.timestamp.desc()).all()
+        
+        # Cold start check
+        if len(activities) < 5:
+            return jsonify({
+                "title": "🔮 The Oracle Awaits",
+                "message": f"Log {5 - len(activities)} more activities to unlock personalized AI insights about your productivity patterns.",
+                "icon": "Sparkles",
+                "type": "neutral",
+                "cold_start": True,
+                "activities_needed": 5 - len(activities)
+            })
+        
+        # Generate insights
+        if full_mode:
+            result = get_all_oracle_insights(activities)
+        else:
+            result = get_oracle_insight(activities)
+        
+        return jsonify(result)
+        
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
         return jsonify({"error": str(e)}), 500
     finally:
         session.close()
@@ -788,6 +1014,235 @@ def get_leaderboard():
         })
         
     except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        session.close()
+
+
+# ============================================================================
+# CHALLENGES (Sprint 3)
+# ============================================================================
+
+@app.route('/api/challenges', methods=['GET'])
+def get_challenges():
+    """Get all challenges for the current user (created or received)."""
+    session = Session()
+    try:
+        user = get_current_user(session)
+        
+        from models import Challenge, ChallengeStatusEnum
+        
+        # Get challenges where user is creator or opponent
+        challenges = session.query(Challenge).filter(
+            (Challenge.creator_id == user.id) | (Challenge.opponent_id == user.id)
+        ).order_by(Challenge.created_at.desc()).all()
+        
+        return jsonify({
+            "challenges": [c.to_dict(include_users=True) for c in challenges]
+        })
+        
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        session.close()
+
+
+@app.route('/api/challenges', methods=['POST'])
+def create_challenge():
+    """Create a new challenge to send to a friend."""
+    session = Session()
+    try:
+        user = get_current_user(session)
+        data = request.get_json()
+        
+        from models import Challenge, ChallengeStatusEnum, CategoryEnum, TimeframeEnum
+        
+        opponent_id = data.get('opponent_id')
+        title = data.get('title', 'Weekly Challenge')
+        category = data.get('category')  # Optional
+        target_hours = data.get('target_hours', 5)
+        timeframe = data.get('timeframe', 'weekly')
+        
+        if not opponent_id:
+            return jsonify({"error": "opponent_id is required"}), 400
+        
+        if opponent_id == user.id:
+            return jsonify({"error": "Cannot challenge yourself"}), 400
+        
+        # Create challenge
+        challenge = Challenge(
+            creator_id=user.id,
+            opponent_id=opponent_id,
+            title=title,
+            category=CategoryEnum[category.upper()] if category else None,
+            target_hours=target_hours,
+            timeframe=TimeframeEnum[timeframe.upper()] if timeframe else TimeframeEnum.WEEKLY,
+            status=ChallengeStatusEnum.PENDING
+        )
+        
+        session.add(challenge)
+        session.commit()
+        
+        return jsonify({
+            "message": "Challenge created!",
+            "challenge": challenge.to_dict(include_users=True)
+        }), 201
+        
+    except Exception as e:
+        session.rollback()
+        return jsonify({"error": str(e)}), 500
+    finally:
+        session.close()
+
+
+@app.route('/api/challenges/<int:challenge_id>/accept', methods=['POST'])
+def accept_challenge(challenge_id):
+    """Accept a pending challenge."""
+    session = Session()
+    try:
+        user = get_current_user(session)
+        
+        from models import Challenge, ChallengeStatusEnum, TimeframeEnum
+        
+        challenge = session.query(Challenge).get(challenge_id)
+        
+        if not challenge:
+            return jsonify({"error": "Challenge not found"}), 404
+        
+        if challenge.opponent_id != user.id:
+            return jsonify({"error": "Only the challenged user can accept"}), 403
+        
+        if challenge.status != ChallengeStatusEnum.PENDING:
+            return jsonify({"error": "Challenge is not pending"}), 400
+        
+        # Calculate start and end dates based on timeframe
+        now = datetime.utcnow()
+        challenge.start_date = now
+        
+        if challenge.timeframe == TimeframeEnum.DAILY:
+            challenge.end_date = now + timedelta(days=1)
+        elif challenge.timeframe == TimeframeEnum.WEEKLY:
+            challenge.end_date = now + timedelta(days=7)
+        else:  # MONTHLY
+            challenge.end_date = now + timedelta(days=30)
+        
+        challenge.status = ChallengeStatusEnum.ACTIVE
+        session.commit()
+        
+        return jsonify({
+            "message": "Challenge accepted!",
+            "challenge": challenge.to_dict(include_users=True)
+        })
+        
+    except Exception as e:
+        session.rollback()
+        return jsonify({"error": str(e)}), 500
+    finally:
+        session.close()
+
+
+@app.route('/api/challenges/<int:challenge_id>/decline', methods=['POST'])
+def decline_challenge(challenge_id):
+    """Decline a pending challenge."""
+    session = Session()
+    try:
+        user = get_current_user(session)
+        
+        from models import Challenge, ChallengeStatusEnum
+        
+        challenge = session.query(Challenge).get(challenge_id)
+        
+        if not challenge:
+            return jsonify({"error": "Challenge not found"}), 404
+        
+        if challenge.opponent_id != user.id:
+            return jsonify({"error": "Only the challenged user can decline"}), 403
+        
+        if challenge.status != ChallengeStatusEnum.PENDING:
+            return jsonify({"error": "Challenge is not pending"}), 400
+        
+        challenge.status = ChallengeStatusEnum.DECLINED
+        session.commit()
+        
+        return jsonify({
+            "message": "Challenge declined",
+            "challenge": challenge.to_dict(include_users=True)
+        })
+        
+    except Exception as e:
+        session.rollback()
+        return jsonify({"error": str(e)}), 500
+    finally:
+        session.close()
+
+
+@app.route('/api/challenges/active', methods=['GET'])
+def get_active_challenges():
+    """Get active challenges with current scores."""
+    session = Session()
+    try:
+        user = get_current_user(session)
+        
+        from models import Challenge, ChallengeStatusEnum, ActivityLog
+        
+        # Get active challenges
+        challenges = session.query(Challenge).filter(
+            (Challenge.creator_id == user.id) | (Challenge.opponent_id == user.id),
+            Challenge.status == ChallengeStatusEnum.ACTIVE
+        ).all()
+        
+        result = []
+        for challenge in challenges:
+            # Calculate current scores based on activities during challenge period
+            creator_activities = session.query(ActivityLog).filter(
+                ActivityLog.user_id == challenge.creator_id,
+                ActivityLog.timestamp >= challenge.start_date,
+                ActivityLog.timestamp <= (challenge.end_date or datetime.utcnow())
+            )
+            
+            opponent_activities = session.query(ActivityLog).filter(
+                ActivityLog.user_id == challenge.opponent_id,
+                ActivityLog.timestamp >= challenge.start_date,
+                ActivityLog.timestamp <= (challenge.end_date or datetime.utcnow())
+            )
+            
+            # Filter by category if specified
+            if challenge.category:
+                creator_activities = creator_activities.filter(ActivityLog.category == challenge.category)
+                opponent_activities = opponent_activities.filter(ActivityLog.category == challenge.category)
+            
+            creator_score = sum(a.productivity_score for a in creator_activities.all())
+            opponent_score = sum(a.productivity_score for a in opponent_activities.all())
+            
+            # Update scores in DB
+            challenge.creator_score = creator_score
+            challenge.opponent_score = opponent_score
+            
+            # Check if challenge has ended
+            if challenge.end_date and datetime.utcnow() >= challenge.end_date:
+                challenge.status = ChallengeStatusEnum.COMPLETED
+                if creator_score > opponent_score:
+                    challenge.winner_id = challenge.creator_id
+                elif opponent_score > creator_score:
+                    challenge.winner_id = challenge.opponent_id
+                # If tie, no winner
+            
+            result.append({
+                **challenge.to_dict(include_users=True),
+                "is_creator": challenge.creator_id == user.id,
+                "my_score": creator_score if challenge.creator_id == user.id else opponent_score,
+                "opponent_score": opponent_score if challenge.creator_id == user.id else creator_score,
+                "time_remaining": (challenge.end_date - datetime.utcnow()).total_seconds() if challenge.end_date else None
+            })
+        
+        session.commit()
+        
+        return jsonify({
+            "active_challenges": result
+        })
+        
+    except Exception as e:
+        session.rollback()
         return jsonify({"error": str(e)}), 500
     finally:
         session.close()

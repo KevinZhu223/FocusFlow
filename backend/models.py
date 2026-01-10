@@ -343,6 +343,71 @@ class Friendship(Base):
         return data
 
 
+class ChallengeStatusEnum(PyEnum):
+    """Status of a challenge"""
+    PENDING = "pending"     # Waiting for opponent to accept
+    ACTIVE = "active"       # Challenge is in progress
+    COMPLETED = "completed" # Challenge ended
+    DECLINED = "declined"   # Opponent declined
+
+
+class Challenge(Base):
+    """Challenge model for friend challenges"""
+    __tablename__ = 'challenges'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    creator_id = Column(Integer, ForeignKey('users.id'), nullable=False, index=True)
+    opponent_id = Column(Integer, ForeignKey('users.id'), nullable=False, index=True)
+    
+    # Challenge details
+    title = Column(String(255), nullable=False)
+    category = Column(Enum(CategoryEnum), nullable=True)  # Optional - can be all categories
+    target_hours = Column(Integer, nullable=False, default=5)  # Target hours to log
+    timeframe = Column(Enum(TimeframeEnum), default=TimeframeEnum.WEEKLY, nullable=False)
+    
+    # Status and timing
+    status = Column(Enum(ChallengeStatusEnum), default=ChallengeStatusEnum.PENDING, nullable=False)
+    start_date = Column(DateTime, nullable=True)  # Set when accepted
+    end_date = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    
+    # Scores
+    creator_score = Column(Float, default=0)
+    opponent_score = Column(Float, default=0)
+    winner_id = Column(Integer, ForeignKey('users.id'), nullable=True)
+    
+    # Relationships
+    creator = relationship("User", foreign_keys=[creator_id], backref="created_challenges")
+    opponent = relationship("User", foreign_keys=[opponent_id], backref="received_challenges")
+    winner = relationship("User", foreign_keys=[winner_id])
+
+    def __repr__(self):
+        return f"<Challenge(id={self.id}, title='{self.title}', status={self.status})>"
+
+    def to_dict(self, include_users=False):
+        data = {
+            "id": self.id,
+            "creator_id": self.creator_id,
+            "opponent_id": self.opponent_id,
+            "title": self.title,
+            "category": self.category.value if self.category else None,
+            "target_hours": self.target_hours,
+            "timeframe": self.timeframe.value if self.timeframe else "weekly",
+            "status": self.status.value,
+            "start_date": self.start_date.isoformat() if self.start_date else None,
+            "end_date": self.end_date.isoformat() if self.end_date else None,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "creator_score": self.creator_score or 0,
+            "opponent_score": self.opponent_score or 0,
+            "winner_id": self.winner_id
+        }
+        if include_users:
+            data["creator"] = self.creator.to_dict(include_private=False) if self.creator else None
+            data["opponent"] = self.opponent.to_dict(include_private=False) if self.opponent else None
+            data["winner"] = self.winner.to_dict(include_private=False) if self.winner else None
+        return data
+
+
 def init_db(database_url: str):
     """
     Initialize the database connection and create tables.
