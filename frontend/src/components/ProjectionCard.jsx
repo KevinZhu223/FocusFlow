@@ -2,18 +2,33 @@
  * FocusFlow - Time Projection Card
  * Shows users how many years of life they'll spend on leisure at current pace
  * Designed to create awareness through "shock analytics"
+ * 
+ * Phase 4 Fix: Resets daily, only shows when leisure limit exceeded, dismissible
  */
 
 import { useState, useEffect } from 'react';
-import { Clock, AlertTriangle, TrendingDown, Skull } from 'lucide-react';
+import { Clock, AlertTriangle, TrendingDown, Skull, X, ChevronDown, ChevronUp } from 'lucide-react';
 import { getProjection } from '../api';
+
+const STORAGE_KEY = 'focusflow_projection_dismissed';
+
+function getTodayKey() {
+    return new Date().toLocaleDateString('en-CA'); // YYYY-MM-DD format
+}
 
 export default function ProjectionCard() {
     const [projection, setProjection] = useState(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
+    const [isDismissed, setIsDismissed] = useState(false);
+    const [isMinimized, setIsMinimized] = useState(false);
 
     useEffect(() => {
+        // Check if dismissed today
+        const dismissedDate = localStorage.getItem(STORAGE_KEY);
+        if (dismissedDate === getTodayKey()) {
+            setIsDismissed(true);
+        }
         fetchProjection();
     }, []);
 
@@ -29,6 +44,15 @@ export default function ProjectionCard() {
         }
     };
 
+    const handleDismiss = () => {
+        localStorage.setItem(STORAGE_KEY, getTodayKey());
+        setIsDismissed(true);
+    };
+
+    const handleMinimize = () => {
+        setIsMinimized(!isMinimized);
+    };
+
     if (loading) {
         return (
             <div className="glass-card p-5 animate-pulse">
@@ -41,9 +65,13 @@ export default function ProjectionCard() {
         return null;
     }
 
-    // INTERVENTION: Only show when limit is exceeded
-    // This preserves the "shock value" for when it matters
+    // Only show when leisure limit is exceeded
     if (!projection.limit_exceeded) {
+        return null;
+    }
+
+    // User dismissed for today
+    if (isDismissed) {
         return null;
     }
 
@@ -59,6 +87,12 @@ export default function ProjectionCard() {
         return 'text-zinc-400';
     };
 
+    const getBorderColor = () => {
+        if (projection.warning_level === 'critical') return 'border-red-500/30';
+        if (projection.warning_level === 'warning') return 'border-amber-500/30';
+        return 'border-zinc-700/50';
+    };
+
     const getIcon = () => {
         if (projection.warning_level === 'critical') return Skull;
         if (projection.warning_level === 'warning') return AlertTriangle;
@@ -67,8 +101,38 @@ export default function ProjectionCard() {
 
     const Icon = getIcon();
 
+    // Minimized View
+    if (isMinimized) {
+        return (
+            <div
+                className={`relative overflow-hidden rounded-xl border ${getBorderColor()}
+                            bg-gradient-to-br ${getWarningColor()} backdrop-blur-sm p-3 cursor-pointer`}
+                onClick={handleMinimize}
+            >
+                <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                        <Icon className={`w-4 h-4 ${getTextColor()}`} />
+                        <span className="text-sm text-zinc-300">Life Projection</span>
+                        <span className={`font-bold ${getTextColor()}`}>
+                            {projection.years_on_leisure} years on leisure
+                        </span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                        <ChevronDown className="w-4 h-4 text-zinc-500" />
+                        <button
+                            onClick={(e) => { e.stopPropagation(); handleDismiss(); }}
+                            className="p-1 hover:bg-zinc-700/50 rounded transition-colors"
+                        >
+                            <X className="w-4 h-4 text-zinc-500" />
+                        </button>
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
     return (
-        <div className={`relative overflow-hidden rounded-xl border border-zinc-800/50 
+        <div className={`relative overflow-hidden rounded-xl border ${getBorderColor()}
                         bg-gradient-to-br ${getWarningColor()} backdrop-blur-sm p-5`}>
             {/* Subtle pattern overlay */}
             <div className="absolute inset-0 opacity-5">
@@ -78,7 +142,7 @@ export default function ProjectionCard() {
             </div>
 
             <div className="relative z-10">
-                {/* Header */}
+                {/* Header with controls */}
                 <div className="flex items-start justify-between mb-4">
                     <div className="flex items-center gap-3">
                         <div className={`p-2 rounded-xl ${projection.warning_level === 'critical' ? 'bg-red-500/20' :
@@ -91,7 +155,24 @@ export default function ProjectionCard() {
                             <p className="text-xs text-zinc-500">Based on last 7 days</p>
                         </div>
                     </div>
-                    <TrendingDown className={`w-4 h-4 ${getTextColor()}`} />
+
+                    {/* Control buttons */}
+                    <div className="flex items-center gap-1">
+                        <button
+                            onClick={handleMinimize}
+                            className="p-1.5 hover:bg-zinc-700/50 rounded-lg transition-colors"
+                            title="Minimize"
+                        >
+                            <ChevronUp className="w-4 h-4 text-zinc-500" />
+                        </button>
+                        <button
+                            onClick={handleDismiss}
+                            className="p-1.5 hover:bg-zinc-700/50 rounded-lg transition-colors"
+                            title="Dismiss for today"
+                        >
+                            <X className="w-4 h-4 text-zinc-500" />
+                        </button>
+                    </div>
                 </div>
 
                 {/* Main Stat */}

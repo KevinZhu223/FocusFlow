@@ -24,6 +24,11 @@ from gamification import (
     open_chest, check_chest_eligibility
 )
 from oracle import get_oracle_insight, get_all_oracle_insights
+from analytics import (
+    get_productivity_insights, get_productivity_heatmap, 
+    get_trend_analysis, get_category_breakdown, export_to_csv,
+    get_full_analytics, calculate_data_confidence
+)
 
 # Load environment variables
 load_dotenv()
@@ -1020,6 +1025,179 @@ def get_leaderboard():
 
 
 # ============================================================================
+# SEASONS & GLOBAL LEADERBOARD (Phase 4)
+# ============================================================================
+
+@app.route('/api/seasons/current', methods=['GET'])
+def get_current_season():
+    """Get the current active season info."""
+    session = Session()
+    try:
+        from models import Season
+        
+        season = session.query(Season).filter(Season.is_active == True).first()
+        
+        if not season:
+            # Return a default "off-season" response
+            return jsonify({
+                "season": None,
+                "message": "No active season. Check back soon!"
+            })
+        
+        # Calculate time remaining
+        now = datetime.utcnow()
+        time_remaining = (season.end_date - now).total_seconds() if season.end_date > now else 0
+        
+        return jsonify({
+            "season": season.to_dict(),
+            "time_remaining_seconds": time_remaining,
+            "days_remaining": int(time_remaining / 86400)
+        })
+        
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        session.close()
+
+
+@app.route('/api/seasons/leaderboard', methods=['GET'])
+def get_season_leaderboard():
+    """Get the global leaderboard for the current season."""
+    session = Session()
+    try:
+        user = get_current_user(session)
+        from models import Season, SeasonScore, User, ActivityLog
+        
+        # Get current season
+        season = session.query(Season).filter(Season.is_active == True).first()
+        
+        if not season:
+            return jsonify({
+                "season": None,
+                "leaderboard": [],
+                "message": "No active season"
+            })
+        
+        # Calculate scores for all public users in this season
+        public_users = session.query(User).filter(User.is_public == True).all()
+        
+        leaderboard = []
+        for u in public_users:
+            # Get activities during season period
+            activities = session.query(ActivityLog).filter(
+                ActivityLog.user_id == u.id,
+                ActivityLog.timestamp >= season.start_date,
+                ActivityLog.timestamp <= season.end_date
+            ).all()
+            
+            season_score = sum(a.productivity_score for a in activities)
+            
+            leaderboard.append({
+                "user_id": u.id,
+                "name": u.name,
+                "level": u.level,
+                "avatar_color": u.avatar_color or "#6366f1",
+                "score": round(season_score, 2),
+                "activities_count": len(activities),
+                "is_you": u.id == user.id
+            })
+        
+        # Sort by score and add ranks
+        leaderboard.sort(key=lambda x: x["score"], reverse=True)
+        for i, entry in enumerate(leaderboard):
+            entry["rank"] = i + 1
+        
+        # Find current user's rank
+        user_rank = next((e["rank"] for e in leaderboard if e["is_you"]), None)
+        
+        return jsonify({
+            "season": season.to_dict(),
+            "leaderboard": leaderboard[:100],  # Top 100
+            "user_rank": user_rank,
+            "total_participants": len(leaderboard)
+        })
+        
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        session.close()
+
+
+@app.route('/api/oracle/proactive', methods=['GET'])
+def get_proactive_intervention():
+    """Check if user needs a proactive Oracle intervention."""
+    session = Session()
+    try:
+        user = get_current_user(session)
+        tz_offset = request.args.get('tz_offset', 0, type=int)
+        
+        from models import ActivityLog
+        from oracle import check_proactive_intervention
+        
+        # Get today's activities
+        cutoff = datetime.utcnow() - timedelta(hours=24)
+        activities = session.query(ActivityLog).filter(
+            ActivityLog.user_id == user.id,
+            ActivityLog.timestamp >= cutoff
+        ).order_by(ActivityLog.timestamp.asc()).all()
+        
+        intervention = check_proactive_intervention(activities, tz_offset)
+        
+        return jsonify({
+            "intervention": intervention
+        })
+        
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        session.close()
+
+
+# ============================================================================
+# SKILL TREES (Phase 4)
+# ============================================================================
+
+@app.route('/api/skill-trees', methods=['GET'])
+def get_skill_trees():
+    """Get user's skill tree progress for all trees."""
+    session = Session()
+    try:
+        user = get_current_user(session)
+        
+        from skill_trees import get_skill_tree_progress
+        progress = get_skill_tree_progress(session, user.id)
+        
+        return jsonify({
+            "skill_trees": progress
+        })
+        
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        session.close()
+
+
+@app.route('/api/skill-trees/perks', methods=['GET'])
+def get_unlocked_perks():
+    """Get all perks the user has unlocked."""
+    session = Session()
+    try:
+        user = get_current_user(session)
+        
+        from skill_trees import get_active_perks
+        perks = get_active_perks(session, user.id)
+        
+        return jsonify({
+            "perks": perks
+        })
+        
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        session.close()
+
+
+# ============================================================================
 # CHALLENGES (Sprint 3)
 # ============================================================================
 
@@ -1988,6 +2166,128 @@ def remove_friend(friendship_id):
         
     except Exception as e:
         session.rollback()
+        return jsonify({"error": str(e)}), 500
+    finally:
+        session.close()
+
+
+# =============================================================================
+# DEEP DATA ANALYTICS ENDPOINTS (Phase 5)
+# =============================================================================
+
+@app.route('/api/analytics/full', methods=['GET'])
+@require_auth
+def get_analytics_full():
+    """Get all analytics data for the analytics page."""
+    session = Session()
+    try:
+        user = get_current_user(session)
+        
+        # Get all user activities
+        activities = session.query(ActivityLog).filter(
+            ActivityLog.user_id == user.id
+        ).order_by(ActivityLog.timestamp.desc()).all()
+        
+        analytics = get_full_analytics(activities)
+        
+        return jsonify(analytics)
+        
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        session.close()
+
+
+@app.route('/api/analytics/insights', methods=['GET'])
+@require_auth
+def get_analytics_insights():
+    """Get actionable productivity insights."""
+    session = Session()
+    try:
+        user = get_current_user(session)
+        
+        activities = session.query(ActivityLog).filter(
+            ActivityLog.user_id == user.id
+        ).all()
+        
+        result = get_productivity_insights(activities)
+        return jsonify(result)
+        
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        session.close()
+
+
+@app.route('/api/analytics/heatmap', methods=['GET'])
+@require_auth
+def get_analytics_heatmap():
+    """Get productivity heatmap data (7 days x 24 hours)."""
+    session = Session()
+    try:
+        user = get_current_user(session)
+        
+        activities = session.query(ActivityLog).filter(
+            ActivityLog.user_id == user.id
+        ).all()
+        
+        result = get_productivity_heatmap(activities)
+        return jsonify(result)
+        
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        session.close()
+
+
+@app.route('/api/analytics/trends', methods=['GET'])
+@require_auth
+def get_analytics_trends():
+    """Get trend analysis with rolling averages."""
+    session = Session()
+    try:
+        user = get_current_user(session)
+        
+        # Optional days parameter
+        days = request.args.get('days', 30, type=int)
+        
+        activities = session.query(ActivityLog).filter(
+            ActivityLog.user_id == user.id
+        ).all()
+        
+        result = get_trend_analysis(activities, days=days)
+        return jsonify(result)
+        
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        session.close()
+
+
+@app.route('/api/analytics/export', methods=['GET'])
+@require_auth
+def export_analytics_csv():
+    """Export user's activity data as CSV download."""
+    session = Session()
+    try:
+        user = get_current_user(session)
+        
+        activities = session.query(ActivityLog).filter(
+            ActivityLog.user_id == user.id
+        ).order_by(ActivityLog.timestamp.desc()).all()
+        
+        csv_content = export_to_csv(activities)
+        
+        # Return as downloadable file
+        return Response(
+            csv_content,
+            mimetype='text/csv',
+            headers={
+                'Content-Disposition': f'attachment; filename=focusflow_export_{datetime.now().strftime("%Y%m%d")}.csv'
+            }
+        )
+        
+    except Exception as e:
         return jsonify({"error": str(e)}), 500
     finally:
         session.close()

@@ -1,24 +1,34 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, Link, useLocation } from 'react-router-dom';
 import {
   Zap, RefreshCw, AlertCircle, Wifi, WifiOff, LogOut,
-  Target, Trophy, User, Home, CalendarDays, Users, Swords
+  Target, Trophy, User, Home, CalendarDays, Users, Swords, Award, BarChart3
 } from 'lucide-react';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
+import { PageLoadingSpinner } from './components/LoadingSpinner';
+
+// Eagerly loaded pages (login flow)
 import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
-import GoalsPage from './pages/GoalsPage';
-import LeaderboardPage from './pages/LeaderboardPage';
-import ProfilePage from './pages/ProfilePage';
-import HistoryPage from './pages/HistoryPage';
-import SocialPage from './pages/SocialPage';
-import ChallengesPage from './pages/ChallengesPage';
+
+// Lazy loaded pages (heavy components)
+const GoalsPage = lazy(() => import('./pages/GoalsPage'));
+const LeaderboardPage = lazy(() => import('./pages/LeaderboardPage'));
+const ProfilePage = lazy(() => import('./pages/ProfilePage'));
+const HistoryPage = lazy(() => import('./pages/HistoryPage'));
+const SocialPage = lazy(() => import('./pages/SocialPage'));
+const ChallengesPage = lazy(() => import('./pages/ChallengesPage'));
+const SkillTreePage = lazy(() => import('./pages/SkillTreePage'));
+const AnalyticsPage = lazy(() => import('./pages/AnalyticsPage'));
+
+// Core components (always needed)
 import ActivityInput from './components/ActivityInput';
 import Timeline from './components/Timeline';
 import Dashboard from './components/Dashboard';
 import InterventionAlert from './components/InterventionAlert';
 import MorningCheckIn from './components/MorningCheckIn';
 import LevelUpModal from './components/LevelUpModal';
+import OracleInterventionModal from './components/OracleInterventionModal';
 import { logActivity, getActivities, getDashboard, deleteActivity, updateActivity, checkHealth } from './api';
 
 /**
@@ -118,6 +128,8 @@ function AppShell({ children }) {
               <NavLink to="/history" icon={CalendarDays} label="History" />
               <NavLink to="/social" icon={Users} label="Friends" />
               <NavLink to="/challenges" icon={Swords} label="Challenges" />
+              <NavLink to="/skills" icon={Award} label="Skills" />
+              <NavLink to="/analytics" icon={BarChart3} label="Analytics" />
               <NavLink to="/leaderboard" icon={Trophy} label="Leaderboard" />
               <NavLink to="/profile" icon={User} label="Profile" />
             </nav>
@@ -337,6 +349,14 @@ function HomePage() {
         onClose={() => setLevelUpData(null)}
         levelData={levelUpData}
       />
+
+      {/* Oracle Proactive Intervention */}
+      <OracleInterventionModal
+        onAcceptMission={(mission) => {
+          console.log('Mission accepted:', mission);
+          // Could auto-log the mission activity here
+        }}
+      />
     </>
   );
 }
@@ -361,93 +381,119 @@ export default function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
-        <Routes>
-          <Route path="/login" element={<LoginPage />} />
-          <Route path="/register" element={<RegisterPage />} />
-          <Route
-            path="/"
-            element={
-              <ProtectedRoute>
-                <AppShell>
-                  <HomePage />
-                </AppShell>
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/goals"
-            element={
-              <ProtectedRoute>
-                <AppShell>
-                  <PageWrapper>
-                    <GoalsPage />
-                  </PageWrapper>
-                </AppShell>
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/history"
-            element={
-              <ProtectedRoute>
-                <AppShell>
-                  <PageWrapper>
-                    <HistoryPage />
-                  </PageWrapper>
-                </AppShell>
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/social"
-            element={
-              <ProtectedRoute>
-                <AppShell>
-                  <PageWrapper>
-                    <SocialPage />
-                  </PageWrapper>
-                </AppShell>
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/challenges"
-            element={
-              <ProtectedRoute>
-                <AppShell>
-                  <PageWrapper>
-                    <ChallengesPage />
-                  </PageWrapper>
-                </AppShell>
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/leaderboard"
-            element={
-              <ProtectedRoute>
-                <AppShell>
-                  <PageWrapper>
-                    <LeaderboardPage />
-                  </PageWrapper>
-                </AppShell>
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/profile"
-            element={
-              <ProtectedRoute>
-                <AppShell>
-                  <PageWrapper>
-                    <ProfilePage />
-                  </PageWrapper>
-                </AppShell>
-              </ProtectedRoute>
-            }
-          />
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
+        <Suspense fallback={<PageLoadingSpinner />}>
+          <Routes>
+            <Route path="/login" element={<LoginPage />} />
+            <Route path="/register" element={<RegisterPage />} />
+            <Route
+              path="/"
+              element={
+                <ProtectedRoute>
+                  <AppShell>
+                    <HomePage />
+                  </AppShell>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/goals"
+              element={
+                <ProtectedRoute>
+                  <AppShell>
+                    <PageWrapper>
+                      <GoalsPage />
+                    </PageWrapper>
+                  </AppShell>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/history"
+              element={
+                <ProtectedRoute>
+                  <AppShell>
+                    <PageWrapper>
+                      <HistoryPage />
+                    </PageWrapper>
+                  </AppShell>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/social"
+              element={
+                <ProtectedRoute>
+                  <AppShell>
+                    <PageWrapper>
+                      <SocialPage />
+                    </PageWrapper>
+                  </AppShell>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/challenges"
+              element={
+                <ProtectedRoute>
+                  <AppShell>
+                    <PageWrapper>
+                      <ChallengesPage />
+                    </PageWrapper>
+                  </AppShell>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/skills"
+              element={
+                <ProtectedRoute>
+                  <AppShell>
+                    <PageWrapper>
+                      <SkillTreePage />
+                    </PageWrapper>
+                  </AppShell>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/analytics"
+              element={
+                <ProtectedRoute>
+                  <AppShell>
+                    <PageWrapper>
+                      <AnalyticsPage />
+                    </PageWrapper>
+                  </AppShell>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/leaderboard"
+              element={
+                <ProtectedRoute>
+                  <AppShell>
+                    <PageWrapper>
+                      <LeaderboardPage />
+                    </PageWrapper>
+                  </AppShell>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/profile"
+              element={
+                <ProtectedRoute>
+                  <AppShell>
+                    <PageWrapper>
+                      <ProfilePage />
+                    </PageWrapper>
+                  </AppShell>
+                </ProtectedRoute>
+              }
+            />
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
+        </Suspense>
       </AuthProvider>
     </BrowserRouter>
   );

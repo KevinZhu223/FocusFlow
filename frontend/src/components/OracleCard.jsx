@@ -166,6 +166,26 @@ export default function OracleCard({ insight, isLoading = false, className = '' 
                         {insight.message}
                     </p>
 
+                    {/* Insight Counter - shows when multiple insights available */}
+                    {insight.total_insights > 1 && (
+                        <div className="mt-2 flex items-center gap-2">
+                            <div className="flex gap-1">
+                                {Array.from({ length: insight.total_insights }).map((_, i) => (
+                                    <div
+                                        key={i}
+                                        className={`w-1.5 h-1.5 rounded-full transition-colors
+                                                  ${i + 1 === insight.insight_index
+                                                ? styles.iconColor.replace('text-', 'bg-')
+                                                : 'bg-zinc-600'}`}
+                                    />
+                                ))}
+                            </div>
+                            <span className="text-xs text-zinc-500">
+                                {insight.insight_index} of {insight.total_insights} insights
+                            </span>
+                        </div>
+                    )}
+
                     {/* Cold start progress indicator */}
                     {insight.cold_start && insight.activities_needed && (
                         <div className="mt-3 flex items-center gap-2">

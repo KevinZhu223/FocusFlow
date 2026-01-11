@@ -1,12 +1,12 @@
 /**
  * FocusFlow - Leaderboard Page
- * Weekly productivity rankings with Global/Friends toggle
- * Phase 5.5: Enhanced UI/UX
+ * Weekly productivity rankings with Global/Friends/Seasons tabs
+ * Phase 4: Added Seasons tab for global competitive seasons
  */
 
 import { useState, useEffect } from 'react';
-import { Trophy, Medal, Crown, Globe, Users, EyeOff, TrendingUp, Loader2, Flame } from 'lucide-react';
-import { getLeaderboard, getProfile, getFriends } from '../api';
+import { Trophy, Medal, Crown, Globe, Users, EyeOff, TrendingUp, Loader2, Flame, Calendar, Clock } from 'lucide-react';
+import { getLeaderboard, getProfile, getFriends, getCurrentSeason, getSeasonLeaderboard } from '../api';
 import { Link as RouterLink } from 'react-router-dom';
 
 const RANK_STYLES = {
@@ -33,9 +33,10 @@ const RANK_STYLES = {
     }
 };
 
-function LeaderboardRow({ entry, isCurrentUser, rank }) {
+function LeaderboardRow({ entry, isCurrentUser, rank, scoreLabel = 'pts' }) {
     const rankStyle = RANK_STYLES[rank];
     const RankIcon = rankStyle?.icon || null;
+    const score = entry.weekly_score ?? entry.score ?? 0;
 
     return (
         <div className={`flex items-center gap-4 p-4 rounded-xl border transition-all group
@@ -78,12 +79,39 @@ function LeaderboardRow({ entry, isCurrentUser, rank }) {
                 </div>
             </div>
 
-            {/* Weekly Score */}
+            {/* Score */}
             <div className="text-right shrink-0">
                 <div className={`text-xl font-bold ${rank <= 3 ? 'gradient-text' : 'text-zinc-100'}`}>
-                    {entry.weekly_score.toFixed(1)}
+                    {score.toFixed(1)}
                 </div>
-                <div className="text-xs text-zinc-500">pts</div>
+                <div className="text-xs text-zinc-500">{scoreLabel}</div>
+            </div>
+        </div>
+    );
+}
+
+function SeasonBanner({ season, daysRemaining }) {
+    if (!season) return null;
+
+    return (
+        <div className="glass-card p-5 border-purple-500/30 bg-gradient-to-r from-purple-500/10 to-indigo-500/10">
+            <div className="flex items-center justify-between">
+                <div className="flex items-center gap-4">
+                    <div className="p-3 rounded-xl bg-purple-500/20">
+                        <Calendar className="w-6 h-6 text-purple-400" />
+                    </div>
+                    <div>
+                        <h3 className="text-lg font-semibold text-zinc-100">{season.name}</h3>
+                        <p className="text-sm text-zinc-400">{season.description || 'Compete globally for exclusive rewards!'}</p>
+                    </div>
+                </div>
+                <div className="text-right">
+                    <div className="flex items-center gap-2 text-amber-400">
+                        <Clock className="w-4 h-4" />
+                        <span className="font-bold text-lg">{daysRemaining}</span>
+                        <span className="text-sm text-zinc-500">days left</span>
+                    </div>
+                </div>
             </div>
         </div>
     );
@@ -91,12 +119,16 @@ function LeaderboardRow({ entry, isCurrentUser, rank }) {
 
 export default function LeaderboardPage() {
     const [leaderboard, setLeaderboard] = useState([]);
+    const [seasonLeaderboard, setSeasonLeaderboard] = useState([]);
     const [friendsList, setFriendsList] = useState([]);
-    const [viewMode, setViewMode] = useState('global');
+    const [viewMode, setViewMode] = useState('global'); // global, friends, season
     const [isPublic, setIsPublic] = useState(false);
     const [currentUserId, setCurrentUserId] = useState(null);
     const [isLoading, setIsLoading] = useState(true);
     const [weekStart, setWeekStart] = useState('');
+    const [currentSeason, setCurrentSeason] = useState(null);
+    const [daysRemaining, setDaysRemaining] = useState(0);
+    const [userSeasonRank, setUserSeasonRank] = useState(null);
 
     useEffect(() => {
         fetchData();
@@ -104,11 +136,13 @@ export default function LeaderboardPage() {
 
     const fetchData = async () => {
         try {
-            const [leaderboardRes, profileRes, friendsRes] = await Promise.all([
+            const [leaderboardRes, profileRes, friendsRes, seasonRes] = await Promise.all([
                 getLeaderboard(),
                 getProfile(),
-                getFriends()
+                getFriends(),
+                getCurrentSeason().catch(() => ({ season: null }))
             ]);
+
             setLeaderboard(leaderboardRes.leaderboard || []);
             setWeekStart(leaderboardRes.week_start);
             setIsPublic(profileRes.user?.is_public || false);
@@ -117,6 +151,21 @@ export default function LeaderboardPage() {
             const friends = friendsRes.friends || [];
             const friendIds = friends.map(f => f.user?.id).filter(Boolean);
             setFriendsList(friendIds);
+
+            // Season data
+            if (seasonRes.season) {
+                setCurrentSeason(seasonRes.season);
+                setDaysRemaining(seasonRes.days_remaining || 0);
+
+                // Fetch season leaderboard
+                try {
+                    const seasonLbRes = await getSeasonLeaderboard();
+                    setSeasonLeaderboard(seasonLbRes.leaderboard || []);
+                    setUserSeasonRank(seasonLbRes.user_rank);
+                } catch (e) {
+                    console.error('Failed to fetch season leaderboard:', e);
+                }
+            }
         } catch (err) {
             console.error('Failed to fetch leaderboard:', err);
         } finally {
@@ -128,7 +177,9 @@ export default function LeaderboardPage() {
         ? leaderboard.filter(entry =>
             friendsList.includes(entry.user_id) || entry.user_id === currentUserId
         )
-        : leaderboard;
+        : viewMode === 'season'
+            ? seasonLeaderboard
+            : leaderboard;
 
     if (isLoading) {
         return (
@@ -158,6 +209,11 @@ export default function LeaderboardPage() {
                 </div>
             )}
 
+            {/* Season Banner */}
+            {viewMode === 'season' && currentSeason && (
+                <SeasonBanner season={currentSeason} daysRemaining={daysRemaining} />
+            )}
+
             {/* Header */}
             <div className="flex items-center justify-between flex-wrap gap-4">
                 <div className="flex items-center gap-3">
@@ -168,14 +224,16 @@ export default function LeaderboardPage() {
                     <div>
                         <h1 className="text-2xl font-bold text-zinc-100">Leaderboard</h1>
                         <p className="text-sm text-zinc-500">
-                            Week of {weekStart ? new Date(weekStart).toLocaleDateString('en-US', {
-                                month: 'short', day: 'numeric', year: 'numeric'
-                            }) : '...'}
+                            {viewMode === 'season' && currentSeason
+                                ? currentSeason.name
+                                : `Week of ${weekStart ? new Date(weekStart).toLocaleDateString('en-US', {
+                                    month: 'short', day: 'numeric', year: 'numeric'
+                                }) : '...'}`}
                         </p>
                     </div>
                 </div>
 
-                {/* Global/Friends Toggle */}
+                {/* View Mode Toggle */}
                 <div className="flex items-center gap-1 p-1 bg-zinc-800/80 rounded-xl border border-zinc-700/50">
                     <button
                         onClick={() => setViewMode('global')}
@@ -185,7 +243,7 @@ export default function LeaderboardPage() {
                                 : 'text-zinc-400 hover:text-zinc-200'}`}
                     >
                         <Globe className="w-4 h-4" />
-                        Global
+                        Weekly
                     </button>
                     <button
                         onClick={() => setViewMode('friends')}
@@ -197,14 +255,31 @@ export default function LeaderboardPage() {
                         <Users className="w-4 h-4" />
                         Friends
                     </button>
+                    {currentSeason && (
+                        <button
+                            onClick={() => setViewMode('season')}
+                            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all
+                                      ${viewMode === 'season'
+                                    ? 'bg-gradient-to-r from-purple-500 to-pink-600 text-white shadow-lg'
+                                    : 'text-zinc-400 hover:text-zinc-200'}`}
+                        >
+                            <Calendar className="w-4 h-4" />
+                            Season
+                        </button>
+                    )}
                 </div>
             </div>
 
             {/* Your Rank Summary */}
             {currentUserId && (() => {
-                const userRank = leaderboard.findIndex(e => e.user_id === currentUserId) + 1;
-                const userEntry = leaderboard.find(e => e.user_id === currentUserId);
+                const lb = viewMode === 'season' ? seasonLeaderboard : leaderboard;
+                const userRank = viewMode === 'season'
+                    ? userSeasonRank
+                    : lb.findIndex(e => e.user_id === currentUserId) + 1;
+                const userEntry = lb.find(e => e.user_id === currentUserId);
+
                 if (userEntry && userRank > 0) {
+                    const score = userEntry.weekly_score ?? userEntry.score ?? 0;
                     return (
                         <div className="glass-card p-4 border-indigo-500/30">
                             <div className="flex items-center justify-between">
@@ -218,8 +293,12 @@ export default function LeaderboardPage() {
                                     </div>
                                 </div>
                                 <div className="text-right">
-                                    <span className="text-sm text-zinc-400">This Week</span>
-                                    <div className="text-xl font-bold text-zinc-100">{userEntry.weekly_score.toFixed(1)} <span className="text-sm text-zinc-500 font-normal">pts</span></div>
+                                    <span className="text-sm text-zinc-400">
+                                        {viewMode === 'season' ? 'Season Score' : 'This Week'}
+                                    </span>
+                                    <div className="text-xl font-bold text-zinc-100">
+                                        {score.toFixed(1)} <span className="text-sm text-zinc-500 font-normal">pts</span>
+                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -235,8 +314,9 @@ export default function LeaderboardPage() {
                         <LeaderboardRow
                             key={entry.user_id}
                             entry={entry}
-                            rank={index + 1}
-                            isCurrentUser={entry.user_id === currentUserId}
+                            rank={entry.rank || index + 1}
+                            isCurrentUser={entry.user_id === currentUserId || entry.is_you}
+                            scoreLabel={viewMode === 'season' ? 'season pts' : 'pts'}
                         />
                     ))}
                 </div>
@@ -251,6 +331,11 @@ export default function LeaderboardPage() {
                             <p className="text-lg font-medium text-zinc-300">No friends on leaderboard</p>
                             <p className="text-sm text-zinc-500 mt-1">Add friends to compare scores!</p>
                         </>
+                    ) : viewMode === 'season' ? (
+                        <>
+                            <p className="text-lg font-medium text-zinc-300">No active season</p>
+                            <p className="text-sm text-zinc-500 mt-1">Check back soon for the next season!</p>
+                        </>
                     ) : (
                         <>
                             <p className="text-lg font-medium text-zinc-300">No rankings yet</p>
@@ -262,4 +347,3 @@ export default function LeaderboardPage() {
         </div>
     );
 }
-

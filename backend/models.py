@@ -408,6 +408,69 @@ class Challenge(Base):
         return data
 
 
+class Season(Base):
+    """Season model for global competitive seasons"""
+    __tablename__ = 'seasons'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String(100), nullable=False)  # e.g., "January Jumpstart"
+    description = Column(String(500), nullable=True)
+    start_date = Column(DateTime, nullable=False)
+    end_date = Column(DateTime, nullable=False)
+    is_active = Column(Boolean, default=False, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    
+    # Badge reward for top performers
+    top_badge_id = Column(Integer, ForeignKey('badges.id'), nullable=True)
+
+    def __repr__(self):
+        return f"<Season(id={self.id}, name='{self.name}', active={self.is_active})>"
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "name": self.name,
+            "description": self.description,
+            "start_date": self.start_date.isoformat() if self.start_date else None,
+            "end_date": self.end_date.isoformat() if self.end_date else None,
+            "is_active": self.is_active,
+            "top_badge_id": self.top_badge_id
+        }
+
+
+class SeasonScore(Base):
+    """Track user scores for each season"""
+    __tablename__ = 'season_scores'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey('users.id'), nullable=False, index=True)
+    season_id = Column(Integer, ForeignKey('seasons.id'), nullable=False, index=True)
+    score = Column(Float, default=0, nullable=False)
+    rank = Column(Integer, nullable=True)  # Final rank at season end
+    activities_count = Column(Integer, default=0, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # Relationships
+    user = relationship("User", backref="season_scores")
+    season = relationship("Season", backref="scores")
+
+    def __repr__(self):
+        return f"<SeasonScore(user={self.user_id}, season={self.season_id}, score={self.score})>"
+
+    def to_dict(self, include_user=False):
+        data = {
+            "id": self.id,
+            "user_id": self.user_id,
+            "season_id": self.season_id,
+            "score": self.score,
+            "rank": self.rank,
+            "activities_count": self.activities_count
+        }
+        if include_user and self.user:
+            data["user"] = self.user.to_dict(include_private=False)
+        return data
+
+
 def init_db(database_url: str):
     """
     Initialize the database connection and create tables.

@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { Send, Sparkles, Loader2, AlertCircle, Dumbbell, BookOpen, Code, Brain, Gamepad2, Coffee, Plus, X } from 'lucide-react';
+import { Send, Sparkles, Loader2, AlertCircle, Dumbbell, BookOpen, Code, Brain, Gamepad2, Coffee, Plus, X, Mic, MicOff } from 'lucide-react';
 import FocusTimer from './FocusTimer';
 
 // Default activity templates
@@ -37,6 +37,61 @@ export default function ActivityInput({ onSubmit, isLoading }) {
         return saved ? JSON.parse(saved) : [];
     });
     const textareaRef = useRef(null);
+
+    // Voice recognition state
+    const [isListening, setIsListening] = useState(false);
+    const [speechSupported, setSpeechSupported] = useState(false);
+    const recognitionRef = useRef(null);
+
+    // Check for Speech Recognition support on mount
+    useEffect(() => {
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        if (SpeechRecognition) {
+            setSpeechSupported(true);
+            recognitionRef.current = new SpeechRecognition();
+            recognitionRef.current.continuous = false;
+            recognitionRef.current.interimResults = false;
+            recognitionRef.current.lang = 'en-US';
+
+            recognitionRef.current.onresult = (event) => {
+                const transcript = event.results[0][0].transcript;
+                setText(prev => prev ? `${prev} ${transcript}` : transcript);
+                setIsListening(false);
+            };
+
+            recognitionRef.current.onerror = (event) => {
+                console.error('Speech recognition error:', event.error);
+                setIsListening(false);
+            };
+
+            recognitionRef.current.onend = () => {
+                setIsListening(false);
+            };
+        }
+
+        return () => {
+            if (recognitionRef.current) {
+                recognitionRef.current.abort();
+            }
+        };
+    }, []);
+
+    // Toggle voice listening
+    const toggleVoiceInput = () => {
+        if (!recognitionRef.current) return;
+
+        if (isListening) {
+            recognitionRef.current.stop();
+            setIsListening(false);
+        } else {
+            try {
+                recognitionRef.current.start();
+                setIsListening(true);
+            } catch (err) {
+                console.error('Failed to start speech recognition:', err);
+            }
+        }
+    };
 
     // Save custom templates to localStorage
     useEffect(() => {
@@ -301,10 +356,31 @@ export default function ActivityInput({ onSubmit, isLoading }) {
                         }
                         disabled={isLoading}
                         rows={1}
-                        className="w-full px-4 py-4 pr-14 bg-transparent text-zinc-100 
+                        className={`w-full px-4 py-4 bg-transparent text-zinc-100 
                      placeholder-zinc-500 resize-none focus:outline-none
-                     disabled:opacity-50 disabled:cursor-not-allowed"
+                     disabled:opacity-50 disabled:cursor-not-allowed
+                     ${speechSupported ? 'pr-24' : 'pr-14'}`}
                     />
+
+                    {/* Voice Input Button - only show if supported */}
+                    {speechSupported && (
+                        <button
+                            type="button"
+                            onClick={toggleVoiceInput}
+                            className={`absolute right-14 bottom-2 p-2.5 rounded-lg
+                                     transition-all duration-200
+                                     ${isListening
+                                    ? 'bg-red-500 hover:bg-red-600 animate-pulse'
+                                    : 'bg-zinc-700 hover:bg-zinc-600'}`}
+                            title={isListening ? 'Stop listening' : 'Voice input'}
+                        >
+                            {isListening ? (
+                                <MicOff className="w-5 h-5 text-white" />
+                            ) : (
+                                <Mic className="w-5 h-5 text-zinc-300" />
+                            )}
+                        </button>
+                    )}
 
                     {/* Submit Button */}
                     <button

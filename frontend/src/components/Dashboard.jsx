@@ -2,11 +2,12 @@
  * FocusFlow - Enhanced Dashboard
  * Phase 2: Includes Radar Chart, Energy Battery, Coach Insight, and Category Breakdown
  * Phase 6: Compact loot button, CorrelationCard, refined layout
+ * Phase 8: Oracle insight navigation
  */
 
 import { useState, useEffect } from 'react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from 'recharts';
-import { TrendingUp, TrendingDown, Minus, Activity, Zap, Target, Gift, Key, Flame } from 'lucide-react';
+import { TrendingUp, TrendingDown, Minus, Activity, Zap, Target, Gift, Key, Flame, ChevronLeft, ChevronRight } from 'lucide-react';
 import ProductivityRadar from './ProductivityRadar';
 import EnergyBattery from './EnergyBattery';
 import CoachInsight from './CoachInsight';
@@ -15,7 +16,7 @@ import CorrelationCard from './CorrelationCard';
 import ProjectionCard from './ProjectionCard';
 import OracleCard from './OracleCard';
 import { useAuth } from '../contexts/AuthContext';
-import { getOracleInsight } from '../api';
+import { getAllOracleInsights } from '../api';
 
 /**
  * Category colors for the pie chart
@@ -226,25 +227,50 @@ function StatCard({ value, label, Icon, color = 'indigo' }) {
  * Displays productivity score, visualizations, and category breakdown
  */
 export default function Dashboard({ dashboardData, isLoading }) {
-    // Oracle insight state
-    const [oracleInsight, setOracleInsight] = useState(null);
+    // Oracle insight state with navigation
+    const [oracleInsights, setOracleInsights] = useState([]);
+    const [currentInsightIndex, setCurrentInsightIndex] = useState(0);
     const [oracleLoading, setOracleLoading] = useState(true);
 
-    // Fetch oracle insight on mount and when activities change
+    // Fetch all oracle insights on mount and when activities change
     useEffect(() => {
         const fetchOracle = async () => {
             try {
                 setOracleLoading(true);
-                const insight = await getOracleInsight();
-                setOracleInsight(insight);
+                const data = await getAllOracleInsights();
+                const insights = data.insights || [];
+                setOracleInsights(insights);
+                setCurrentInsightIndex(0);
             } catch (err) {
-                console.error('Failed to fetch oracle insight:', err);
+                console.error('Failed to fetch oracle insights:', err);
             } finally {
                 setOracleLoading(false);
             }
         };
         fetchOracle();
     }, [dashboardData?.activity_count]); // Refresh when activity count changes
+
+    // Navigation handlers for Oracle
+    const nextInsight = () => {
+        setCurrentInsightIndex((prev) =>
+            prev < oracleInsights.length - 1 ? prev + 1 : 0
+        );
+    };
+
+    const prevInsight = () => {
+        setCurrentInsightIndex((prev) =>
+            prev > 0 ? prev - 1 : oracleInsights.length - 1
+        );
+    };
+
+    // Current insight with navigation info
+    const currentInsight = oracleInsights.length > 0
+        ? {
+            ...oracleInsights[currentInsightIndex],
+            insight_index: currentInsightIndex + 1,
+            total_insights: oracleInsights.length
+        }
+        : null;
 
     // Prepare pie chart data
     const pieData = dashboardData?.category_breakdown
@@ -270,8 +296,34 @@ export default function Dashboard({ dashboardData, isLoading }) {
                 </h2>
             </div>
 
-            {/* The Oracle - AI Analytics */}
-            <OracleCard insight={oracleInsight} isLoading={oracleLoading} />
+            {/* The Oracle - AI Analytics with Navigation */}
+            <div className="relative">
+                <OracleCard insight={currentInsight} isLoading={oracleLoading} />
+
+                {/* Navigation Arrows - show when multiple insights */}
+                {oracleInsights.length > 1 && !oracleLoading && (
+                    <>
+                        <button
+                            onClick={prevInsight}
+                            className="absolute left-2 top-1/2 -translate-y-1/2 p-2 rounded-full
+                                     bg-zinc-800/80 hover:bg-zinc-700 text-zinc-400 hover:text-zinc-200
+                                     transition-all shadow-lg backdrop-blur-sm z-10"
+                            title="Previous insight"
+                        >
+                            <ChevronLeft className="w-4 h-4" />
+                        </button>
+                        <button
+                            onClick={nextInsight}
+                            className="absolute right-2 top-1/2 -translate-y-1/2 p-2 rounded-full
+                                     bg-zinc-800/80 hover:bg-zinc-700 text-zinc-400 hover:text-zinc-200
+                                     transition-all shadow-lg backdrop-blur-sm z-10"
+                            title="Next insight"
+                        >
+                            <ChevronRight className="w-4 h-4" />
+                        </button>
+                    </>
+                )}
+            </div>
 
             {/* Coach's Insight */}
             <CoachInsight />

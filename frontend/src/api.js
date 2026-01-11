@@ -568,6 +568,67 @@ export async function getActiveChallenges() {
 }
 
 // ============================================
+// Skill Trees API (Phase 4)
+// ============================================
+
+/**
+ * Get user's skill tree progress
+ */
+export async function getSkillTrees() {
+    const response = await fetch(`${API_BASE}/skill-trees`, {
+        headers: getHeaders(),
+    });
+    return handleResponse(response);
+}
+
+/**
+ * Get user's unlocked perks
+ */
+export async function getUnlockedPerks() {
+    const response = await fetch(`${API_BASE}/skill-trees/perks`, {
+        headers: getHeaders(),
+    });
+    return handleResponse(response);
+}
+
+// ============================================
+// Seasons API (Phase 4)
+// ============================================
+
+/**
+ * Get current active season info
+ */
+export async function getCurrentSeason() {
+    const response = await fetch(`${API_BASE}/seasons/current`, {
+        headers: getHeaders(),
+    });
+    return handleResponse(response);
+}
+
+/**
+ * Get season leaderboard (global Top 100)
+ */
+export async function getSeasonLeaderboard() {
+    const response = await fetch(`${API_BASE}/seasons/leaderboard`, {
+        headers: getHeaders(),
+    });
+    return handleResponse(response);
+}
+
+/**
+ * Check for proactive Oracle intervention
+ */
+export async function getProactiveIntervention() {
+    const params = new URLSearchParams();
+    params.append('tz_offset', getTimezoneOffset());
+
+    const response = await fetch(`${API_BASE}/oracle/proactive?${params}`, {
+        headers: getHeaders(),
+    });
+    return handleResponse(response);
+}
+
+// ============================================
 // Utility API
 // ============================================
 
@@ -577,4 +638,75 @@ export async function getActiveChallenges() {
 export async function checkHealth() {
     const response = await fetch(`${API_BASE}/health`);
     return response.json();
+}
+
+// ============================================
+// Deep Data Analytics API (Phase 5)
+// ============================================
+
+/**
+ * Get full analytics data for the analytics page
+ */
+export async function getFullAnalytics() {
+    const response = await fetch(`${API_BASE}/analytics/full`, {
+        headers: getHeaders(),
+    });
+    return handleResponse(response);
+}
+
+/**
+ * Get actionable productivity insights
+ */
+export async function getInsights() {
+    const response = await fetch(`${API_BASE}/analytics/insights`, {
+        headers: getHeaders(),
+    });
+    return handleResponse(response);
+}
+
+/**
+ * Get productivity heatmap data (7 days x 24 hours)
+ */
+export async function getHeatmap() {
+    const response = await fetch(`${API_BASE}/analytics/heatmap`, {
+        headers: getHeaders(),
+    });
+    return handleResponse(response);
+}
+
+/**
+ * Get trend analysis with rolling averages
+ * @param {number} days - Number of days to analyze (default 30)
+ */
+export async function getTrends(days = 30) {
+    const response = await fetch(`${API_BASE}/analytics/trends?days=${days}`, {
+        headers: getHeaders(),
+    });
+    return handleResponse(response);
+}
+
+/**
+ * Export user data as CSV download
+ */
+export async function exportDataCSV() {
+    const response = await fetch(`${API_BASE}/analytics/export`, {
+        headers: getHeaders(),
+    });
+
+    if (!response.ok) {
+        throw new Error('Export failed');
+    }
+
+    // Trigger file download
+    const blob = await response.blob();
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `focusflow_export_${new Date().toISOString().split('T')[0]}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    window.URL.revokeObjectURL(url);
+
+    return { success: true };
 }

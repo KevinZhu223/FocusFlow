@@ -381,15 +381,16 @@ def get_oracle_insights(activities: List[Any]) -> List[Dict[str, Any]]:
 
 def get_oracle_insight(activities: List[Any]) -> Dict[str, Any]:
     """
-    Get the single most relevant Oracle insight for a user.
+    Get a rotating Oracle insight for a user.
     
-    This is the main entry point called by the API.
+    Rotates through available insights based on the current day,
+    so users see different messages instead of the same one repeatedly.
     
     Args:
         activities: List of ActivityLog objects
         
     Returns:
-        Single insight dictionary (the highest priority one)
+        Single insight dictionary (rotates daily)
     """
     insights = get_oracle_insights(activities)
     
@@ -402,16 +403,24 @@ def get_oracle_insight(activities: List[Any]) -> Dict[str, Any]:
             "cold_start": True
         }
     
-    # Return the highest priority insight
-    top_insight = insights[0]
+    # Rotate through insights based on the day of year
+    # This ensures users see different insights each day
+    day_of_year = datetime.now().timetuple().tm_yday
+    insight_index = day_of_year % len(insights)
+    selected_insight = insights[insight_index]
     
-    # Remove internal priority field from response
-    if 'priority' in top_insight:
-        del top_insight['priority']
-    if 'data' in top_insight:
-        del top_insight['data']  # Remove debug data from API response
+    # Remove internal fields from response
+    if 'priority' in selected_insight:
+        del selected_insight['priority']
+    if 'data' in selected_insight:
+        del selected_insight['data']
     
-    return top_insight
+    # Add total count for UI to show "1 of N insights"
+    selected_insight['insight_index'] = insight_index + 1
+    selected_insight['total_insights'] = len(insights)
+    
+    return selected_insight
+
 
 
 def get_all_oracle_insights(activities: List[Any]) -> Dict[str, Any]:
@@ -438,3 +447,154 @@ def get_all_oracle_insights(activities: List[Any]) -> Dict[str, Any]:
             "end": df['timestamp'].max().isoformat() if not df.empty else None
         }
     }
+
+
+# ============================================================================
+# ORACLE 2.0 - PROACTIVE INTERVENTIONS
+# ============================================================================
+
+RECOVERY_MISSIONS = [
+    {
+        "id": "walk_break",
+        "name": "Nature Reset",
+        "description": "Take a 10-minute walk outside",
+        "xp_reward": 50,
+        "category": "Health",
+        "duration_minutes": 10
+    },
+    {
+        "id": "hydration",
+        "name": "Hydration Check",
+        "description": "Drink a full glass of water",
+        "xp_reward": 20,
+        "category": "Health",
+        "duration_minutes": 2
+    },
+    {
+        "id": "stretch",
+        "name": "Desk Stretch",
+        "description": "Do 5 minutes of stretching",
+        "xp_reward": 30,
+        "category": "Health",
+        "duration_minutes": 5
+    },
+    {
+        "id": "meditation",
+        "name": "Mind Reset",
+        "description": "3-minute breathing exercise",
+        "xp_reward": 40,
+        "category": "Health",
+        "duration_minutes": 3
+    },
+    {
+        "id": "social_break",
+        "name": "Human Connection",
+        "description": "Send a quick message to a friend",
+        "xp_reward": 35,
+        "category": "Social",
+        "duration_minutes": 5
+    }
+]
+
+
+def check_proactive_intervention(activities: List[Any], tz_offset: int = 0) -> Optional[Dict[str, Any]]:
+    """
+    Check if user needs a proactive intervention based on recent activity.
+    
+    Oracle 2.0 monitors for:
+    - Extended work sessions without breaks
+    - Late night work patterns
+    - High consecutive focus hours
+    
+    Args:
+        activities: Recent ActivityLog objects (last 24 hours)
+        tz_offset: Timezone offset in minutes
+        
+    Returns:
+        Intervention suggestion or None
+    """
+    if not activities:
+        return None
+    
+    # Convert to DataFrame
+    df = activities_to_dataframe(activities)
+    if df.empty:
+        return None
+    
+    # Calculate current local hour
+    now_utc = datetime.utcnow()
+    local_now = now_utc - timedelta(minutes=tz_offset)
+    current_hour = local_now.hour
+    
+    # Filter to today's activities
+    today = local_now.date()
+    today_df = df[df['date'] == today]
+    
+    if today_df.empty:
+        return None
+    
+    # Calculate session metrics
+    total_minutes_today = today_df['duration_minutes'].sum()
+    career_minutes = today_df[today_df['category'] == 'Career']['duration_minutes'].sum()
+    health_minutes = today_df[today_df['category'] == 'Health']['duration_minutes'].sum()
+    
+    # Most recent activity
+    recent_activity = today_df.iloc[-1] if len(today_df) > 0 else None
+    
+    # =========================================
+    # INTERVENTION CHECKS
+    # =========================================
+    
+    # 1. Extended Work Session (3+ hours career without health break)
+    if career_minutes >= 180 and health_minutes < 15:
+        import random
+        mission = random.choice([m for m in RECOVERY_MISSIONS if m['category'] == 'Health'])
+        return {
+            "type": "burnout_risk",
+            "severity": "warning",
+            "title": "⚠️ Extended Work Session Detected",
+            "message": f"You've logged {career_minutes // 60}h {career_minutes % 60}m of work today without a significant break. Your cognitive performance drops significantly after 90 minutes of focused work.",
+            "suggestion": f"Complete this Recovery Mission for bonus XP!",
+            "mission": mission,
+            "icon": "AlertTriangle"
+        }
+    
+    # 2. Late Night Work (after 10 PM local time)
+    if current_hour >= 22 and career_minutes > 60:
+        import random
+        mission = random.choice(RECOVERY_MISSIONS)
+        return {
+            "type": "late_night",
+            "severity": "caution",
+            "title": "🌙 Late Night Detected",
+            "message": "Working past 10 PM impacts sleep quality and tomorrow's productivity. Consider wrapping up for the night.",
+            "suggestion": "Wind down with a light activity instead.",
+            "mission": {
+                "id": "wind_down",
+                "name": "Evening Wind-Down",
+                "description": "Step away from screens for 15 minutes",
+                "xp_reward": 45,
+                "category": "Health",
+                "duration_minutes": 15
+            },
+            "icon": "Moon"
+        }
+    
+    # 3. Positive Reinforcement (Good balance detected)
+    if total_minutes_today >= 180 and health_minutes >= 30:
+        return {
+            "type": "positive",
+            "severity": "success",
+            "title": "✨ Great Balance Today!",
+            "message": f"You've maintained a healthy work-life balance with {health_minutes}min of health activities. Keep it up!",
+            "mission": None,
+            "icon": "Sparkles"
+        }
+    
+    return None
+
+
+def get_recovery_missions() -> List[Dict[str, Any]]:
+    """Return all available recovery missions."""
+    return RECOVERY_MISSIONS
+
