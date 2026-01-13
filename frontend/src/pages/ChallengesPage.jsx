@@ -11,7 +11,7 @@ import {
 } from 'lucide-react';
 import {
     getChallenges, createChallenge, acceptChallenge,
-    declineChallenge, getActiveChallenges, getFriends
+    declineChallenge, getActiveChallenges, getFriends, getCurrentUserId
 } from '../api';
 
 /**
@@ -25,8 +25,9 @@ function ChallengeCard({ challenge, currentUserId, onAccept, onDecline, onRefres
     const isWinner = challenge.winner_id === currentUserId;
 
     const opponent = isCreator ? challenge.opponent : challenge.creator;
-    const myScore = isCreator ? challenge.creator_score : challenge.opponent_score;
-    const theirScore = isCreator ? challenge.opponent_score : challenge.creator_score;
+    // Use pre-calculated scores from backend (handles user context correctly)
+    const myScore = challenge.my_score ?? (isCreator ? challenge.creator_score : challenge.opponent_score);
+    const theirScore = challenge.their_score ?? (isCreator ? challenge.opponent_score : challenge.creator_score);
 
     const getStatusColor = () => {
         if (isCompleted && isWinner) return 'border-emerald-500/50 bg-emerald-500/10';
@@ -232,10 +233,18 @@ function CreateChallengeModal({ isOpen, onClose, friends, onCreate }) {
                                          text-zinc-100 focus:outline-none focus:border-indigo-500"
                             >
                                 <option value="">All Categories</option>
-                                <option value="career">Career</option>
-                                <option value="health">Health</option>
-                                <option value="social">Social</option>
+                                <option value="career">💼 Career</option>
+                                <option value="health">❤️ Health</option>
+                                <option value="education">📚 Education</option>
+                                <option value="chores">🏠 Chores</option>
+                                <option value="social">👥 Social</option>
+                                <option value="leisure">🎮 Leisure (Limit Challenge)</option>
                             </select>
+                            <p className="text-xs text-zinc-500 mt-1">
+                                {category === 'leisure'
+                                    ? '⚠️ Leisure has negative scores - lowest score wins!'
+                                    : 'Highest productivity score wins'}
+                            </p>
                         </div>
                         <div>
                             <label className="block text-sm text-zinc-400 mb-1">Duration</label>
@@ -250,6 +259,16 @@ function CreateChallengeModal({ isOpen, onClose, friends, onCreate }) {
                                 <option value="monthly">1 Month</option>
                             </select>
                         </div>
+                    </div>
+
+                    {/* Challenge Info */}
+                    <div className="p-3 rounded-lg bg-zinc-800/50 border border-zinc-700/30">
+                        <p className="text-xs text-zinc-400 leading-relaxed">
+                            <strong className="text-zinc-300">How it works:</strong> Log activities during the challenge period.
+                            {category === 'leisure'
+                                ? ' For Leisure challenges, the person with the LOWEST screen time/gaming wins!'
+                                : ' Your productivity scores are totaled - highest score wins!'}
+                        </p>
                     </div>
 
                     <button
@@ -282,7 +301,7 @@ export default function ChallengesPage() {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
     const [showCreateModal, setShowCreateModal] = useState(false);
-    const currentUserId = JSON.parse(localStorage.getItem('focusflow_user') || '{}')?.id;
+    const currentUserId = getCurrentUserId();
 
     useEffect(() => {
         fetchData();
@@ -296,9 +315,10 @@ export default function ChallengesPage() {
                 getFriends()
             ]);
             setChallenges(challengesRes.challenges || []);
-            // Extract accepted friends from the friends response
-            const acceptedFriends = friendsRes.friends?.filter(f => f.status === 'accepted') || [];
-            setFriends(acceptedFriends.map(f => f.friend || f.user));
+            // Backend already returns only accepted friends in the 'friends' array
+            // Each friend object has structure: { friendship_id, user: {...} }
+            const friendsList = friendsRes.friends || [];
+            setFriends(friendsList.map(f => f.user).filter(Boolean));
         } catch (err) {
             console.error('Failed to fetch data:', err);
             setError('Failed to load challenges');

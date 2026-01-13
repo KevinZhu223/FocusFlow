@@ -28,6 +28,24 @@ export function setToken(token) {
 }
 
 /**
+ * Get current user ID from JWT token
+ * Returns null if no token or invalid token
+ */
+export function getCurrentUserId() {
+    const token = getToken();
+    if (!token) return null;
+
+    try {
+        // Decode the JWT payload (second part)
+        const payload = JSON.parse(atob(token.split('.')[1]));
+        return payload.user_id || null;
+    } catch (e) {
+        console.error('Failed to decode token:', e);
+        return null;
+    }
+}
+
+/**
  * Get headers with auth token if available
  */
 function getHeaders(includeAuth = true) {
@@ -89,6 +107,16 @@ export async function login(email, password) {
  */
 export async function getMe() {
     const response = await fetch(`${API_BASE}/auth/me`, {
+        headers: getHeaders(),
+    });
+    return handleResponse(response);
+}
+
+/**
+ * Get notification counts for pending friend requests and challenges
+ */
+export async function getNotificationCounts() {
+    const response = await fetch(`${API_BASE}/notifications/count`, {
         headers: getHeaders(),
     });
     return handleResponse(response);
@@ -509,6 +537,17 @@ export async function removeFriend(friendshipId) {
     return handleResponse(response);
 }
 
+/**
+ * Get public profile of another user
+ * @param {number} userId - The user ID to fetch
+ */
+export async function getUserProfile(userId) {
+    const response = await fetch(`${API_BASE}/users/${userId}/profile`, {
+        headers: getHeaders(),
+    });
+    return handleResponse(response);
+}
+
 // ============================================
 // Challenges API (Sprint 3)
 // ============================================
@@ -646,9 +685,13 @@ export async function checkHealth() {
 
 /**
  * Get full analytics data for the analytics page
+ * Passes timezone offset so daily scores are grouped by local date
  */
 export async function getFullAnalytics() {
-    const response = await fetch(`${API_BASE}/analytics/full`, {
+    const params = new URLSearchParams();
+    params.append('tz_offset', getTimezoneOffset());
+
+    const response = await fetch(`${API_BASE}/analytics/full?${params}`, {
         headers: getHeaders(),
     });
     return handleResponse(response);
@@ -709,4 +752,14 @@ export async function exportDataCSV() {
     window.URL.revokeObjectURL(url);
 
     return { success: true };
+}
+
+/**
+ * Get Work Mode clustering analysis (Flow State Fingerprinting)
+ */
+export async function getWorkModes() {
+    const response = await fetch(`${API_BASE}/analytics/work-modes`, {
+        headers: getHeaders(),
+    });
+    return handleResponse(response);
 }

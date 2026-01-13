@@ -9,6 +9,7 @@ import {
     Clock, UserCheck, Search, Sparkles, Trophy
 } from 'lucide-react';
 import { getFriends, sendFriendRequest, acceptFriendRequest, removeFriend } from '../api';
+import UserProfileModal from '../components/UserProfileModal';
 
 export default function SocialPage() {
     const [friendData, setFriendData] = useState(null);
@@ -17,6 +18,7 @@ export default function SocialPage() {
     const [isSending, setIsSending] = useState(false);
     const [error, setError] = useState(null);
     const [successMessage, setSuccessMessage] = useState(null);
+    const [selectedUserId, setSelectedUserId] = useState(null);
 
     useEffect(() => {
         fetchFriends();
@@ -222,8 +224,10 @@ export default function SocialPage() {
                                 <div className="flex items-center gap-3">
                                     <div
                                         className="w-12 h-12 rounded-xl flex items-center justify-center text-white font-bold text-lg
-                                                 shadow-lg"
+                                                 shadow-lg cursor-pointer hover:ring-2 hover:ring-indigo-500/50 transition-all"
                                         style={{ backgroundColor: friend.user?.avatar_color || '#6366f1' }}
+                                        onClick={() => setSelectedUserId(friend.user?.id)}
+                                        title="View profile"
                                     >
                                         {friend.user?.name?.charAt(0).toUpperCase()}
                                     </div>
@@ -303,6 +307,13 @@ export default function SocialPage() {
                     </div>
                 </div>
             )}
+
+            {/* Profile Modal */}
+            <UserProfileModal
+                userId={selectedUserId}
+                isOpen={!!selectedUserId}
+                onClose={() => setSelectedUserId(null)}
+            />
         </div>
     );
 }

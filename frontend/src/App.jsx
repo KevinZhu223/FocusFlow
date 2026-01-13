@@ -29,7 +29,7 @@ import InterventionAlert from './components/InterventionAlert';
 import MorningCheckIn from './components/MorningCheckIn';
 import LevelUpModal from './components/LevelUpModal';
 import OracleInterventionModal from './components/OracleInterventionModal';
-import { logActivity, getActivities, getDashboard, deleteActivity, updateActivity, checkHealth } from './api';
+import { logActivity, getActivities, getDashboard, deleteActivity, updateActivity, checkHealth, getNotificationCounts } from './api';
 
 /**
  * Protected Route Wrapper
@@ -61,22 +61,28 @@ function ProtectedRoute({ children }) {
 }
 
 /**
- * Navigation Link Component
+ * Navigation Link Component with optional notification badge
  */
-function NavLink({ to, icon: Icon, label }) {
+function NavLink({ to, icon: Icon, label, badge = 0 }) {
   const location = useLocation();
   const isActive = location.pathname === to;
 
   return (
     <Link
       to={to}
-      className={`flex items-center gap-2 px-3 py-2 rounded-lg transition-colors
+      className={`relative flex items-center gap-2 px-3 py-2 rounded-lg transition-colors
                 ${isActive
           ? 'bg-indigo-500/20 text-indigo-400'
           : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50'}`}
     >
       <Icon className="w-4 h-4" />
       <span className="hidden sm:inline text-sm">{label}</span>
+      {badge > 0 && (
+        <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 flex items-center 
+                        justify-center text-xs font-bold rounded-full bg-red-500 text-white shadow-lg">
+          {badge > 9 ? '9+' : badge}
+        </span>
+      )}
     </Link>
   );
 }
@@ -87,6 +93,7 @@ function NavLink({ to, icon: Icon, label }) {
 function AppShell({ children }) {
   const { user, logout } = useAuth();
   const [isConnected, setIsConnected] = useState(true);
+  const [notifications, setNotifications] = useState({ pending_friends: 0, pending_challenges: 0 });
 
   useEffect(() => {
     const checkConnection = async () => {
@@ -100,6 +107,22 @@ function AppShell({ children }) {
 
     checkConnection();
     const interval = setInterval(checkConnection, 30000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Fetch notification counts
+  useEffect(() => {
+    const fetchNotifications = async () => {
+      try {
+        const data = await getNotificationCounts();
+        setNotifications(data);
+      } catch (e) {
+        console.error('Failed to fetch notifications:', e);
+      }
+    };
+
+    fetchNotifications();
+    const interval = setInterval(fetchNotifications, 30000);
     return () => clearInterval(interval);
   }, []);
 
@@ -126,8 +149,8 @@ function AppShell({ children }) {
               <NavLink to="/" icon={Home} label="Home" />
               <NavLink to="/goals" icon={Target} label="Goals" />
               <NavLink to="/history" icon={CalendarDays} label="History" />
-              <NavLink to="/social" icon={Users} label="Friends" />
-              <NavLink to="/challenges" icon={Swords} label="Challenges" />
+              <NavLink to="/social" icon={Users} label="Friends" badge={notifications.pending_friends} />
+              <NavLink to="/challenges" icon={Swords} label="Challenges" badge={notifications.pending_challenges} />
               <NavLink to="/skills" icon={Award} label="Skills" />
               <NavLink to="/analytics" icon={BarChart3} label="Analytics" />
               <NavLink to="/leaderboard" icon={Trophy} label="Leaderboard" />

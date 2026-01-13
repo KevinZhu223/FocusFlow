@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 import { getFullAnalytics, exportDataCSV } from '../api';
+import WorkModesChart from '../components/WorkModesChart';
 
 // Day names for heatmap
 const DAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
@@ -423,6 +424,9 @@ export default function AnalyticsPage() {
                     </div>
                 </div>
             )}
+
+            {/* Work Modes Clustering (Flow State Fingerprint) */}
+            <WorkModesChart />
 
             {/* Heatmap */}
             {heatmap?.has_data && (

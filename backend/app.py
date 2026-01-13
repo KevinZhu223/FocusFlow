@@ -29,6 +29,7 @@ from analytics import (
     get_trend_analysis, get_category_breakdown, export_to_csv,
     get_full_analytics, calculate_data_confidence
 )
+from ml_engine import analyze_work_modes
 
 # Load environment variables
 load_dotenv()
@@ -1208,18 +1209,84 @@ def get_challenges():
     try:
         user = get_current_user(session)
         
-        from models import Challenge, ChallengeStatusEnum
+        from models import Challenge, ChallengeStatusEnum, ActivityLog, CategoryEnum
         
         # Get challenges where user is creator or opponent
         challenges = session.query(Challenge).filter(
             (Challenge.creator_id == user.id) | (Challenge.opponent_id == user.id)
         ).order_by(Challenge.created_at.desc()).all()
         
+        result = []
+        for challenge in challenges:
+            challenge_data = challenge.to_dict(include_users=True)
+            
+            # For active challenges, calculate live scores from activities
+            if challenge.status == ChallengeStatusEnum.ACTIVE and challenge.start_date:
+                # Calculate current scores based on activities during challenge period
+                creator_activities = session.query(ActivityLog).filter(
+                    ActivityLog.user_id == challenge.creator_id,
+                    ActivityLog.timestamp >= challenge.start_date,
+                    ActivityLog.timestamp <= (challenge.end_date or datetime.utcnow())
+                )
+                
+                opponent_activities = session.query(ActivityLog).filter(
+                    ActivityLog.user_id == challenge.opponent_id,
+                    ActivityLog.timestamp >= challenge.start_date,
+                    ActivityLog.timestamp <= (challenge.end_date or datetime.utcnow())
+                )
+                
+                # Filter by category if specified
+                if challenge.category:
+                    creator_activities = creator_activities.filter(ActivityLog.category == challenge.category)
+                    opponent_activities = opponent_activities.filter(ActivityLog.category == challenge.category)
+                
+                creator_score = sum(a.productivity_score for a in creator_activities.all())
+                opponent_score = sum(a.productivity_score for a in opponent_activities.all())
+                
+                # Update scores in DB
+                challenge.creator_score = creator_score
+                challenge.opponent_score = opponent_score
+                
+                # Add computed fields for frontend
+                challenge_data['creator_score'] = creator_score
+                challenge_data['opponent_score'] = opponent_score
+                challenge_data['is_creator'] = challenge.creator_id == user.id
+                challenge_data['my_score'] = creator_score if challenge.creator_id == user.id else opponent_score
+                challenge_data['their_score'] = opponent_score if challenge.creator_id == user.id else creator_score
+                
+                # Check if challenge has ended
+                if challenge.end_date and datetime.utcnow() >= challenge.end_date:
+                    challenge.status = ChallengeStatusEnum.COMPLETED
+                    challenge_data['status'] = 'completed'
+                    
+                    is_leisure_challenge = challenge.category == CategoryEnum.LEISURE
+                    if is_leisure_challenge:
+                        if creator_score < opponent_score:
+                            challenge.winner_id = challenge.creator_id
+                        elif opponent_score < creator_score:
+                            challenge.winner_id = challenge.opponent_id
+                    else:
+                        if creator_score > opponent_score:
+                            challenge.winner_id = challenge.creator_id
+                        elif opponent_score > creator_score:
+                            challenge.winner_id = challenge.opponent_id
+                    challenge_data['winner_id'] = challenge.winner_id
+            else:
+                # For other statuses, just add is_creator for convenience
+                challenge_data['is_creator'] = challenge.creator_id == user.id
+                challenge_data['my_score'] = challenge.creator_score if challenge.creator_id == user.id else challenge.opponent_score
+                challenge_data['their_score'] = challenge.opponent_score if challenge.creator_id == user.id else challenge.creator_score
+            
+            result.append(challenge_data)
+        
+        session.commit()
+        
         return jsonify({
-            "challenges": [c.to_dict(include_users=True) for c in challenges]
+            "challenges": result
         })
         
     except Exception as e:
+        session.rollback()
         return jsonify({"error": str(e)}), 500
     finally:
         session.close()
@@ -1399,10 +1466,24 @@ def get_active_challenges():
             # Check if challenge has ended
             if challenge.end_date and datetime.utcnow() >= challenge.end_date:
                 challenge.status = ChallengeStatusEnum.COMPLETED
-                if creator_score > opponent_score:
-                    challenge.winner_id = challenge.creator_id
-                elif opponent_score > creator_score:
-                    challenge.winner_id = challenge.opponent_id
+                
+                # For Leisure category, lowest score wins (limit challenge)
+                # Leisure activities have negative scores, so lower = better
+                from models import CategoryEnum
+                is_leisure_challenge = challenge.category == CategoryEnum.LEISURE
+                
+                if is_leisure_challenge:
+                    # Lower score wins for leisure (limit challenges)
+                    if creator_score < opponent_score:
+                        challenge.winner_id = challenge.creator_id
+                    elif opponent_score < creator_score:
+                        challenge.winner_id = challenge.opponent_id
+                else:
+                    # Higher score wins for productive categories
+                    if creator_score > opponent_score:
+                        challenge.winner_id = challenge.creator_id
+                    elif opponent_score > creator_score:
+                        challenge.winner_id = challenge.opponent_id
                 # If tie, no winner
             
             result.append({
@@ -1963,6 +2044,154 @@ def get_morning_checkin():
 
 
 # ============================================================================
+# PUBLIC PROFILE VIEWING
+# ============================================================================
+
+@app.route('/api/users/<int:user_id>/profile', methods=['GET'])
+def get_user_public_profile(user_id):
+    """Get public profile of another user (for friends/leaderboard viewing)."""
+    from models import Friendship, FriendshipStatusEnum, UserBadge, Badge
+    
+    session = Session()
+    try:
+        # Get the target user
+        target_user = session.query(User).filter(User.id == user_id).first()
+        if not target_user:
+            return jsonify({"error": "User not found"}), 404
+        
+        # Get current user (if authenticated)
+        current_user = None
+        try:
+            current_user = get_current_user(session)
+        except:
+            pass  # Anonymous viewing
+        
+        # Check if viewer can see this profile
+        is_own_profile = current_user and current_user.id == user_id
+        is_public = target_user.is_public
+        is_friend = False
+        
+        if current_user and not is_own_profile:
+            # Check if they're friends
+            friendship = session.query(Friendship).filter(
+                ((Friendship.user_id == current_user.id) & (Friendship.friend_id == user_id)) |
+                ((Friendship.user_id == user_id) & (Friendship.friend_id == current_user.id)),
+                Friendship.status == FriendshipStatusEnum.ACCEPTED
+            ).first()
+            is_friend = friendship is not None
+        
+        # If not public and not a friend, deny access
+        if not is_public and not is_friend and not is_own_profile:
+            return jsonify({
+                "error": "This profile is private",
+                "can_view": False
+            }), 403
+        
+        # Get badges for this user
+        user_badges = session.query(UserBadge).filter(
+            UserBadge.user_id == user_id
+        ).all()
+        
+        # Get basic stats
+        activities = session.query(ActivityLog).filter(
+            ActivityLog.user_id == user_id
+        ).all()
+        
+        total_score = sum(a.productivity_score or 0 for a in activities)
+        total_activities = len(activities)
+        
+        # Calculate level from XP
+        xp = target_user.xp or 0
+        level = 1
+        xp_for_current = 0
+        xp_for_next = 100
+        while xp >= xp_for_next:
+            level += 1
+            xp_for_current = xp_for_next
+            xp_for_next = int(xp_for_next * 1.5)
+        
+        return jsonify({
+            "can_view": True,
+            "is_friend": is_friend,
+            "is_own_profile": is_own_profile,
+            "user": {
+                "id": target_user.id,
+                "name": target_user.name,
+                "bio": target_user.bio if is_friend or is_own_profile else None,
+                "avatar_color": target_user.avatar_color or "#6366f1",
+                "is_public": target_user.is_public,
+                "level": level,
+                "xp": xp
+            },
+            "stats": {
+                "total_activities": total_activities,
+                "total_score": round(total_score, 1),
+                "member_since": target_user.created_at.isoformat() if target_user.created_at else None
+            },
+            "badges": [
+                {
+                    "id": ub.id,
+                    "earned_at": ub.earned_at.isoformat() if ub.earned_at else None,
+                    "badge": {
+                        "name": ub.badge.name if ub.badge else "Unknown",
+                        "description": ub.badge.description if ub.badge else "",
+                        "icon_name": ub.badge.icon_name if ub.badge else "Award"
+                    }
+                }
+                for ub in user_badges
+            ],
+            "level_progress": {
+                "level": level,
+                "xp": xp,
+                "progress_percent": round(((xp - xp_for_current) / (xp_for_next - xp_for_current)) * 100) if xp_for_next > xp_for_current else 100,
+                "next_level": level + 1
+            }
+        })
+        
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        session.close()
+
+
+# ============================================================================
+# NOTIFICATIONS
+# ============================================================================
+
+@app.route('/api/notifications/count', methods=['GET'])
+def get_notification_counts():
+    """Get counts of pending friend requests and challenge invites for badge display."""
+    from models import Friendship, FriendshipStatusEnum, Challenge, ChallengeStatusEnum
+    
+    session = Session()
+    try:
+        user = get_current_user(session)
+        
+        # Count pending friend requests received
+        pending_friends = session.query(Friendship).filter(
+            Friendship.friend_id == user.id,
+            Friendship.status == FriendshipStatusEnum.PENDING
+        ).count()
+        
+        # Count pending challenge invites received
+        pending_challenges = session.query(Challenge).filter(
+            Challenge.opponent_id == user.id,
+            Challenge.status == ChallengeStatusEnum.PENDING
+        ).count()
+        
+        return jsonify({
+            "pending_friends": pending_friends,
+            "pending_challenges": pending_challenges,
+            "total": pending_friends + pending_challenges
+        })
+        
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        session.close()
+
+
+# ============================================================================
 # FRIEND SYSTEM (Phase 5)
 # ============================================================================
 
@@ -2179,6 +2408,7 @@ def remove_friend(friendship_id):
 @require_auth
 def get_analytics_full():
     """Get all analytics data for the analytics page."""
+    tz_offset = request.args.get('tz_offset', type=int, default=0)
     session = Session()
     try:
         user = get_current_user(session)
@@ -2188,7 +2418,7 @@ def get_analytics_full():
             ActivityLog.user_id == user.id
         ).order_by(ActivityLog.timestamp.desc()).all()
         
-        analytics = get_full_analytics(activities)
+        analytics = get_full_analytics(activities, tz_offset=tz_offset)
         
         return jsonify(analytics)
         
@@ -2286,6 +2516,27 @@ def export_analytics_csv():
                 'Content-Disposition': f'attachment; filename=focusflow_export_{datetime.now().strftime("%Y%m%d")}.csv'
             }
         )
+        
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        session.close()
+
+
+@app.route('/api/analytics/work-modes', methods=['GET'])
+@require_auth
+def get_work_modes_analysis():
+    """Get Work Mode clustering analysis (Flow State Fingerprinting)."""
+    session = Session()
+    try:
+        user = get_current_user(session)
+        
+        activities = session.query(ActivityLog).filter(
+            ActivityLog.user_id == user.id
+        ).all()
+        
+        result = analyze_work_modes(activities)
+        return jsonify(result)
         
     except Exception as e:
         return jsonify({"error": str(e)}), 500

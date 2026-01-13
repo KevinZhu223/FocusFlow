@@ -8,6 +8,7 @@ import { useState, useEffect } from 'react';
 import { Trophy, Medal, Crown, Globe, Users, EyeOff, TrendingUp, Loader2, Flame, Calendar, Clock } from 'lucide-react';
 import { getLeaderboard, getProfile, getFriends, getCurrentSeason, getSeasonLeaderboard } from '../api';
 import { Link as RouterLink } from 'react-router-dom';
+import UserProfileModal from '../components/UserProfileModal';
 
 const RANK_STYLES = {
     1: {
@@ -33,16 +34,18 @@ const RANK_STYLES = {
     }
 };
 
-function LeaderboardRow({ entry, isCurrentUser, rank, scoreLabel = 'pts' }) {
+function LeaderboardRow({ entry, isCurrentUser, rank, scoreLabel = 'pts', onClick }) {
     const rankStyle = RANK_STYLES[rank];
     const RankIcon = rankStyle?.icon || null;
     const score = entry.weekly_score ?? entry.score ?? 0;
 
     return (
-        <div className={`flex items-center gap-4 p-4 rounded-xl border transition-all group
+        <div
+            onClick={() => !isCurrentUser && onClick?.(entry.user_id)}
+            className={`flex items-center gap-4 p-4 rounded-xl border transition-all group
                         ${isCurrentUser
-                ? 'bg-indigo-500/15 border-indigo-500/40 ring-1 ring-indigo-500/20'
-                : 'bg-zinc-900/50 border-zinc-800/50 hover:border-zinc-700/50'}
+                    ? 'bg-indigo-500/15 border-indigo-500/40 ring-1 ring-indigo-500/20'
+                    : 'bg-zinc-900/50 border-zinc-800/50 hover:border-zinc-700/50 cursor-pointer'}
                         ${rankStyle ? `${rankStyle.bg} ${rankStyle.border} ${rankStyle.glow}` : ''}`}>
             {/* Rank */}
             <div className="w-10 text-center shrink-0">
@@ -129,6 +132,7 @@ export default function LeaderboardPage() {
     const [currentSeason, setCurrentSeason] = useState(null);
     const [daysRemaining, setDaysRemaining] = useState(0);
     const [userSeasonRank, setUserSeasonRank] = useState(null);
+    const [selectedUserId, setSelectedUserId] = useState(null);
 
     useEffect(() => {
         fetchData();
@@ -317,6 +321,7 @@ export default function LeaderboardPage() {
                             rank={entry.rank || index + 1}
                             isCurrentUser={entry.user_id === currentUserId || entry.is_you}
                             scoreLabel={viewMode === 'season' ? 'season pts' : 'pts'}
+                            onClick={(userId) => setSelectedUserId(userId)}
                         />
                     ))}
                 </div>
@@ -344,6 +349,13 @@ export default function LeaderboardPage() {
                     )}
                 </div>
             )}
+
+            {/* Profile Modal */}
+            <UserProfileModal
+                userId={selectedUserId}
+                isOpen={!!selectedUserId}
+                onClose={() => setSelectedUserId(null)}
+            />
         </div>
     );
 }

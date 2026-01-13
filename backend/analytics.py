@@ -55,9 +55,13 @@ def calculate_data_confidence(activity_count: int) -> Dict[str, Any]:
         }
 
 
-def activities_to_dataframe(activities: List[Any]) -> pd.DataFrame:
+def activities_to_dataframe(activities: List[Any], tz_offset: int = 0) -> pd.DataFrame:
     """
     Convert activity objects to a Pandas DataFrame for analysis.
+    
+    Args:
+        activities: List of ActivityLog objects
+        tz_offset: Timezone offset in minutes (positive = behind UTC, e.g., 300 for EST)
     """
     if not activities:
         return pd.DataFrame()
@@ -67,15 +71,18 @@ def activities_to_dataframe(activities: List[Any]) -> pd.DataFrame:
         # Extract category value from enum
         category_value = act.category.value if hasattr(act.category, 'value') else str(act.category)
         
+        # Convert UTC timestamp to local time for consistent date grouping
+        local_timestamp = act.timestamp - timedelta(minutes=tz_offset)
+        
         data.append({
             'id': act.id,
-            'timestamp': act.timestamp,
+            'timestamp': local_timestamp,  # Use local time
             'category': category_value,
             'duration': act.duration_minutes or 0,
             'impact': act.productivity_score or 0,  # Use productivity_score
-            'hour': act.timestamp.hour,
-            'day_of_week': act.timestamp.weekday(),  # 0=Monday
-            'date': act.timestamp.date(),
+            'hour': local_timestamp.hour,
+            'day_of_week': local_timestamp.weekday(),  # 0=Monday
+            'date': local_timestamp.date(),
             'description': act.activity_name or act.raw_input,  # Use activity_name
             'sentiment': act.sentiment_score or 0
         })
@@ -326,11 +333,16 @@ def get_productivity_heatmap(activities: List[Any]) -> Dict[str, Any]:
     }
 
 
-def get_trend_analysis(activities: List[Any], days: int = 30) -> Dict[str, Any]:
+def get_trend_analysis(activities: List[Any], days: int = 30, tz_offset: int = 0) -> Dict[str, Any]:
     """
     Calculate rolling averages and trends over time.
+    
+    Args:
+        activities: List of ActivityLog objects
+        days: Number of days to analyze
+        tz_offset: Timezone offset in minutes for consistent date grouping with Heatmap
     """
-    df = activities_to_dataframe(activities)
+    df = activities_to_dataframe(activities, tz_offset=tz_offset)
     
     if df.empty:
         return {
@@ -462,14 +474,18 @@ def export_to_csv(activities: List[Any]) -> str:
     return csv_buffer.getvalue()
 
 
-def get_full_analytics(activities: List[Any]) -> Dict[str, Any]:
+def get_full_analytics(activities: List[Any], tz_offset: int = 0) -> Dict[str, Any]:
     """
     Get all analytics data in one call (for the analytics page).
+    
+    Args:
+        activities: List of ActivityLog objects
+        tz_offset: Timezone offset in minutes for consistent date grouping
     """
     return {
         'insights': get_productivity_insights(activities),
         'heatmap': get_productivity_heatmap(activities),
-        'trends': get_trend_analysis(activities),
+        'trends': get_trend_analysis(activities, tz_offset=tz_offset),
         'categories': get_category_breakdown(activities),
         'confidence': calculate_data_confidence(len(activities))
     }
