@@ -135,7 +135,7 @@ class ActivityLog(Base):
     
     # Parsed/analyzed fields
     activity_name = Column(String(255), nullable=False)
-    category = Column(Enum(CategoryEnum), nullable=False)
+    category = Column(Enum(CategoryEnum), nullable=False, index=True)  # Index for Dashboard/Analytics filtering
     duration_minutes = Column(Integer, nullable=True)
     
     # Scores and analysis

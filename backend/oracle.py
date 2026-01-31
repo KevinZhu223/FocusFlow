@@ -379,15 +379,27 @@ def get_oracle_insights(activities: List[Any]) -> List[Dict[str, Any]]:
     return insights
 
 
-def get_oracle_insight(activities: List[Any]) -> Dict[str, Any]:
+def _personalize_insight_message(message: str, context: Optional[Dict[str, Any]]) -> str:
+    """Prepend a short personalization line when user has active goals (no LLM)."""
+    if not context or not context.get("active_goals"):
+        return message
+    goals = context["active_goals"]
+    if len(goals) == 1:
+        g = goals[0]
+        prefix = f"You're tracking: {g.get('title', 'Goal')} ({g.get('target_value')}h/{g.get('timeframe', 'week')}). "
+    else:
+        prefix = f"You have {len(goals)} goals set. "
+    return prefix + message
+
+
+def get_oracle_insight(activities: List[Any], context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """
     Get a rotating Oracle insight for a user.
-    
-    Rotates through available insights based on the current day,
-    so users see different messages instead of the same one repeatedly.
+    Optionally personalize message with context (active goals, focus stats).
     
     Args:
         activities: List of ActivityLog objects
+        context: Optional dict with active_goals, focus_sessions_last_7_days, etc.
         
     Returns:
         Single insight dictionary (rotates daily)
@@ -395,25 +407,28 @@ def get_oracle_insight(activities: List[Any]) -> Dict[str, Any]:
     insights = get_oracle_insights(activities)
     
     if not insights:
+        msg = "Keep logging activities to unlock personalized AI insights about your productivity patterns."
+        msg = _personalize_insight_message(msg, context)
         return {
             "title": "🔮 The Oracle Awaits",
-            "message": "Keep logging activities to unlock personalized AI insights about your productivity patterns.",
+            "message": msg,
             "icon": "Sparkles",
             "type": "neutral",
             "cold_start": True
         }
     
     # Rotate through insights based on the day of year
-    # This ensures users see different insights each day
     day_of_year = datetime.now().timetuple().tm_yday
     insight_index = day_of_year % len(insights)
-    selected_insight = insights[insight_index]
+    selected_insight = insights[insight_index].copy()
+    
+    # Personalize message with context when available
+    if selected_insight.get("message") and context:
+        selected_insight["message"] = _personalize_insight_message(selected_insight["message"], context)
     
     # Remove internal fields from response
-    if 'priority' in selected_insight:
-        del selected_insight['priority']
-    if 'data' in selected_insight:
-        del selected_insight['data']
+    selected_insight.pop('priority', None)
+    selected_insight.pop('data', None)
     
     # Add total count for UI to show "1 of N insights"
     selected_insight['insight_index'] = insight_index + 1
@@ -423,9 +438,10 @@ def get_oracle_insight(activities: List[Any]) -> Dict[str, Any]:
 
 
 
-def get_all_oracle_insights(activities: List[Any]) -> Dict[str, Any]:
+def get_all_oracle_insights(activities: List[Any], context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """
     Get all Oracle insights for a user (for a detailed view).
+    Optionally personalize each message with context.
     
     Returns:
         Dictionary with all insights and summary stats
@@ -433,10 +449,12 @@ def get_all_oracle_insights(activities: List[Any]) -> Dict[str, Any]:
     df = activities_to_dataframe(activities)
     insights = get_oracle_insights(activities)
     
-    # Clean insights for API response
+    # Clean insights for API response and optionally personalize messages
     clean_insights = []
     for insight in insights:
         clean = {k: v for k, v in insight.items() if k not in ['priority', 'data']}
+        if clean.get("message") and context:
+            clean["message"] = _personalize_insight_message(clean["message"], context)
         clean_insights.append(clean)
     
     return {

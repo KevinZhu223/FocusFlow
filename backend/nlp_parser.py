@@ -84,11 +84,11 @@ Only return the JSON object, no other text."""
 # Daily insights system prompt
 DAILY_INSIGHTS_PROMPT = """You are a supportive yet honest productivity coach analyzing a user's daily activity log.
 
-Given the list of activities, generate a 2-sentence "Coach's Insight" that:
-1. First sentence: Highlight a positive achievement or pattern
-2. Second sentence: Provide one actionable suggestion for improvement
+Given the list of activities (and optionally their active goals and recent focus session stats), generate a 2-sentence "Coach's Insight" that:
+1. First sentence: Highlight a positive achievement or pattern. If they have goals, reference progress toward those goals when relevant (e.g. "You're doing great on your Coding goal!").
+2. Second sentence: Provide one actionable suggestion for improvement.
 
-Be specific, encouraging, and practical. Reference actual activities from their log.
+Be specific, encouraging, and practical. Reference actual activities from their log. Use their goals and focus stats to personalize—avoid generic advice when you have context.
 Keep it concise - exactly 2 sentences."""
 
 
@@ -316,12 +316,14 @@ def parse_activity(text: str) -> Dict[str, Any]:
     return parsed
 
 
-def generate_daily_insights(activities: list) -> str:
+def generate_daily_insights(activities: list, context: dict = None) -> str:
     """
     Generate AI-powered daily insights based on the user's activities.
+    Optionally inject context (active goals, recent focus session stats) for personalized advice.
     
     Args:
         activities: List of activity dictionaries for the day
+        context: Optional dict with active_goals, focus_sessions_last_7_days, focus_minutes_last_7_days
         
     Returns:
         2-sentence coach insight string
@@ -336,13 +338,27 @@ def generate_daily_insights(activities: list) -> str:
         for a in activities
     ])
     
+    user_content = f"Today's activities:\n{activities_text}"
+    if context:
+        goals_text = ""
+        if context.get("active_goals"):
+            goals_text = "Active goals: " + "; ".join(
+                f"{g.get('title', 'Goal')} ({g.get('target_value')}h/{g.get('timeframe', 'week')})"
+                for g in context["active_goals"]
+            ) + ".\n"
+        focus_text = ""
+        if context.get("focus_sessions_last_7_days") is not None:
+            focus_text = f"Recent focus: {context['focus_sessions_last_7_days']} focus sessions in last 7 days ({context.get('focus_minutes_last_7_days', 0)} min total).\n"
+        if goals_text or focus_text:
+            user_content = "User context (use to personalize):\n" + goals_text + focus_text + "\n" + user_content
+    
     if openai_client:
         try:
             response = openai_client.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=[
                     {"role": "system", "content": DAILY_INSIGHTS_PROMPT},
-                    {"role": "user", "content": f"Today's activities:\n{activities_text}"}
+                    {"role": "user", "content": user_content}
                 ],
                 temperature=0.7,
                 max_tokens=150
@@ -351,14 +367,18 @@ def generate_daily_insights(activities: list) -> str:
         except Exception as e:
             print(f"Failed to generate insights: {e}")
     
-    # Fallback insights
+    # Fallback insights (optionally mention goals)
     total_score = sum(a.get('productivity_score', 0) for a in activities)
     career_count = sum(1 for a in activities if a.get('category') == 'Career')
+    if context and context.get("active_goals"):
+        goal_summary = " You're tracking goals—keep it up!"
+    else:
+        goal_summary = ""
     
     if total_score > 20:
-        return f"Great productivity day with {len(activities)} activities logged! Keep up the momentum by maintaining consistent work sessions tomorrow."
+        return f"Great productivity day with {len(activities)} activities logged!{goal_summary} Keep up the momentum by maintaining consistent work sessions tomorrow."
     elif career_count > 0:
-        return f"You logged {career_count} career-focused activities today. Consider balancing with some health or social time for sustainable productivity."
+        return f"You logged {career_count} career-focused activities today.{goal_summary} Consider balancing with some health or social time for sustainable productivity."
     else:
         return f"You logged {len(activities)} activities today. Try adding more focused work sessions to boost your productivity score."
 
